@@ -2212,17 +2212,29 @@ function showToast(msg,type=''){
   clearTimeout(t._t);t._t=setTimeout(()=>{t.className='';},2500);
 }
 
-// ─── INIT ───
-(async()=>{
-  await loadData();
-  // Google Drive 토큰 복원 시도 (localStorage)
-  tryRestoreGdriveToken();
-  // Client ID 미설정이면 배너 표시
-  if(!getGdriveClientId()){
-    const banner=document.getElementById('gdrive-setup-banner');
-    if(banner) banner.style.display='';
-  }
-  renderBoard();
-  document.querySelector('[data-sort="newest"]').classList.add('active');
-})();
+// ─── INIT 수정 제안 ───
+async function initApp() {
+  try {
+    // 1. GAPI 로드 확인
+    await new Promise((resolve) => {
+      gapi.load('client:auth2', resolve);
+    });
+    
+    // 2. Client 초기화 (API_KEY 및 CLIENT_ID 필요)
+    await gapi.client.init({
+      apiKey: 'YOUR_API_KEY',
+      clientId: 'YOUR_CLIENT_ID',
+      discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+      scope: 'https://www.googleapis.com/auth/drive.file'
+    });
 
+    // 3. 데이터 로드
+    await loadData();
+    console.log("앱 초기화 및 데이터 로드 완료");
+  } catch (e) {
+    console.error("초기화 실패:", e);
+  }
+}
+
+// 실행
+initApp();
