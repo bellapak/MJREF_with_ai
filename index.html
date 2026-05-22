@@ -8,6 +8,8 @@
 <!-- Google Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+<!-- Google Identity Services (OAuth2 implicit grant) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -32,14 +34,15 @@
   <button class="tb-btn" onclick="copyMakeJsonTemplate()">JSON 구조 복사</button>
   <input type="file" id="make-json-input" accept="application/json,.json" style="display:none" onchange="importMakeJsonFile(event)">
   <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
-  <button class="tb-btn" onclick="connectExternalFolder()">USB 연결</button>
-  <button class="tb-btn" onclick="saveToExternalFolder()">USB 저장</button>
-  <button class="tb-btn" onclick="loadFromExternalFolder()">USB 불러오기</button>
+  <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
+  <button class="tb-btn" id="gdrive-save-btn"    onclick="saveToDrive()">Drive 저장</button>
+  <button class="tb-btn" id="gdrive-load-btn"    onclick="loadFromDrive()">Drive 불러오기</button>
 
   <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
-  <div id="usb-status" style="font-size:11px;color:var(--t3);white-space:nowrap;">USB 미연결</div>
-  <!-- USB 재연결 배너: 핸들은 있지만 권한 재요청이 필요할 때 표시 -->
-  <button id="usb-reconnect-banner" onclick="autoReconnectUsb()" style="display:none;background:rgba(255,159,10,0.18);border:1px solid rgba(255,159,10,0.45);color:var(--orange);font-family:var(--fn);font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s;" onmouseover="this.style.background='rgba(255,159,10,0.28)'" onmouseout="this.style.background='rgba(255,159,10,0.18)'">⚡ USB 클릭하여 재연결</button>
+  <!-- Google Drive 상태 표시 -->
+  <div id="gdrive-status" style="font-size:11px;color:var(--t3);white-space:nowrap;">Drive 미연결</div>
+  <!-- Drive Client ID 미설정 시 경고 배너 -->
+  <button id="gdrive-setup-banner" onclick="openGdriveSetup()" style="display:none;background:rgba(255,159,10,0.18);border:1px solid rgba(255,159,10,0.45);color:var(--orange);font-family:var(--fn);font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s;">⚙ Drive Client ID 설정 필요</button>
   <div id="autosave-indicator" style="font-size:10px;color:var(--t3);white-space:nowrap;transition:color .3s;" title="자동저장 상태">●</div>
   <div id="search-wrap">
     <span id="search-icon">검색</span>

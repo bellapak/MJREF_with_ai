@@ -57,8 +57,11 @@ let modalSelectedCats=[];
 let selectedAiTargets=new Set();
 let selectedAiOpts=new Set(['mood']);
 let currentTab='board';
-let externalDirHandle=null;
-let externalConnectedName='';
+// ─── GOOGLE DRIVE STATE ───
+let gdriveToken=null;          // OAuth2 access token
+let gdriveTokenExpiry=0;       // expiry timestamp (ms)
+let gdriveFolderId=null;       // refboard-assets/ 폴더 ID
+let gdriveDataFileId=null;     // refboard-data.json 파일 ID
 let aiGroupFilter='';
 let aiCatFilter='';
 
@@ -197,26 +200,6 @@ async function saveData(){
   }
 }
 
-async function saveExternalHandle(handle){
-  try{
-    const db=await openDB();
-    const tx=db.transaction(STORE_NAME,'readwrite');
-    tx.objectStore(STORE_NAME).put(handle,'external_dir_handle');
-    await new Promise((res,rej)=>{tx.oncomplete=res;tx.onerror=e=>rej(e.target.error);});
-  }catch(e){console.warn('외부 폴더 핸들 저장 실패',e);}
-}
-
-async function loadExternalHandle(){
-  try{
-    const db=await openDB();
-    const tx=db.transaction(STORE_NAME,'readonly');
-    const req=tx.objectStore(STORE_NAME).get('external_dir_handle');
-    return await new Promise((res,rej)=>{req.onsuccess=e=>res(e.target.result||null);req.onerror=e=>rej(e.target.error);});
-  }catch(e){
-    console.warn('외부 폴더 핸들 복원 실패',e);
-    return null;
-  }
-}
 
 async function loadData(){
   try{
@@ -245,169 +228,369 @@ async function loadData(){
 }
 
 
-function updateUsbStatus(msg='',connected=false){
-  const el=document.getElementById('usb-status');
+
+// ─── GOOGLE DRIVE — SETUP & AUTH ───────────────────────────────────────────
+// Client ID는 localStorage에 저장. 사용자가 직접 입력 (console.cloud.google.com).
+// Scope: Drive 앱 전용 파일만 접근 (drive.file) — 다른 Drive 파일은 건드리지 않음.
+const GDRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+const GDRIVE_FOLDER_NAME='refboard-assets';
+const GDRIVE_JSON_NAME='refboard-data.json';
+
+function getGdriveClientId(){
+  return localStorage.getItem('gdrive_client_id')||'';
+}
+function saveGdriveClientId(id){
+  localStorage.setItem('gdrive_client_id',id.trim());
+}
+
+function updateGdriveStatus(msg='',ok=false){
+  const el=document.getElementById('gdrive-status');
   if(!el)return;
-  if(connected && externalConnectedName){
-    el.textContent='USB 연결됨 · '+externalConnectedName+(msg?' · '+msg:'');
-    el.style.color='var(--green)';
-  }else{
-    el.textContent=msg||'USB 미연결';
-    el.style.color='var(--t3)';
+  el.textContent=msg;
+  el.style.color=ok?'var(--green)':'var(--t3)';
+}
+
+function gdriveTokenValid(){
+  return gdriveToken && Date.now()<gdriveTokenExpiry-60000;
+}
+
+// OAuth2 implicit grant — 팝업 없음, 탭 리다이렉트 방식
+function gdriveSignIn(){
+  const clientId=getGdriveClientId();
+  if(!clientId){openGdriveSetup();return;}
+  if(gdriveTokenValid()){showToast('이미 연결됐어요','success');return;}
+  // google.accounts.oauth2 토큰 클라이언트 (implicit flow)
+  if(!window.google){showToast('Google 라이브러리 로딩 중이에요. 잠시 후 다시 시도해주세요.','error');return;}
+  const client=google.accounts.oauth2.initTokenClient({
+    client_id:clientId,
+    scope:GDRIVE_SCOPE,
+    callback:(tokenResp)=>{
+      if(tokenResp.error){
+        showToast('Google 로그인 실패: '+tokenResp.error,'error');
+        updateGdriveStatus('연결 실패',false);
+        return;
+      }
+      gdriveToken=tokenResp.access_token;
+      gdriveTokenExpiry=Date.now()+(tokenResp.expires_in||3600)*1000;
+      localStorage.setItem('gdrive_token',gdriveToken);
+      localStorage.setItem('gdrive_token_expiry',String(gdriveTokenExpiry));
+      updateGdriveStatus('Drive 연결됨 ✓',true);
+      showToast('Google Drive 연결됐어요','success');
+    }
+  });
+  client.requestAccessToken();
+}
+
+// 앱 시작 시 저장된 토큰 복원 시도
+function tryRestoreGdriveToken(){
+  const tok=localStorage.getItem('gdrive_token');
+  const exp=parseInt(localStorage.getItem('gdrive_token_expiry')||'0');
+  if(tok && Date.now()<exp-60000){
+    gdriveToken=tok;
+    gdriveTokenExpiry=exp;
+    updateGdriveStatus('Drive 연결됨 ✓',true);
+    return true;
+  }
+  updateGdriveStatus('Drive 미연결',false);
+  return false;
+}
+
+function requireGdriveToken(){
+  if(!gdriveTokenValid())throw new Error('Google Drive에 먼저 연결해주세요. (상단 "Google 연결" 버튼)');
+}
+
+// ─── GOOGLE DRIVE — REST API 헬퍼 ──────────────────────────────────────────
+async function driveRequest(method, path, params={}, body=null, isUpload=false){
+  requireGdriveToken();
+  let url='https://www.googleapis.com/';
+  url += isUpload ? 'upload/drive/v3'+path : 'drive/v3'+path;
+  const qs=new URLSearchParams(params).toString();
+  if(qs) url+='?'+qs;
+  const opts={method, headers:{Authorization:'Bearer '+gdriveToken}};
+  if(body instanceof FormData){opts.body=body;}
+  else if(body){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(body);}
+  const resp=await fetch(url,opts);
+  if(!resp.ok){
+    const err=await resp.json().catch(()=>({error:{message:resp.statusText}}));
+    throw new Error(err?.error?.message||resp.statusText);
+  }
+  // DELETE 등은 본문 없음
+  const ct=resp.headers.get('Content-Type')||'';
+  return ct.includes('json')?resp.json():resp.text();
+}
+
+// 파일 목록에서 이름으로 찾기
+async function driveFindFile(name, parentId=null){
+  let q=`name='${name}' and trashed=false`;
+  if(parentId) q+=` and '${parentId}' in parents`;
+  const res=await driveRequest('GET','/files',{q,fields:'files(id,name)',spaces:'drive'});
+  return (res.files||[])[0]||null;
+}
+
+// JSON 파일 업로드 (없으면 create, 있으면 update)
+async function driveUploadJson(name, obj, existingId=null){
+  const content=JSON.stringify(obj,null,2);
+  const blob=new Blob([content],{type:'application/json'});
+  const meta={name};
+  const form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+  form.append('file',blob);
+  if(existingId){
+    // PATCH update
+    return driveRequest('PATCH',`/files/${existingId}`,{uploadType:'multipart'},{},false)
+      .catch(()=>null)
+      .then(()=>{
+        // FormData 업데이트
+        return fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`,
+          {method:'PATCH',headers:{Authorization:'Bearer '+gdriveToken},body:form}
+        ).then(r=>r.json());
+      });
+  }
+  // POST create
+  return fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    {method:'POST',headers:{Authorization:'Bearer '+gdriveToken},body:form}
+  ).then(r=>r.json());
+}
+
+// 바이너리 에셋 업로드 (data:URL → Blob)
+async function driveUploadAsset(item, dataUrl, folderId){
+  const blob=dataUrlToBlob(dataUrl);
+  const ext=extFromMime(blob.type);
+  const filename=`${item.id}_${safeFileBase(item.title)}.${ext}`;
+  // 이미 올라간 파일이 있으면 재사용
+  const existing=await driveFindFile(filename, folderId).catch(()=>null);
+  if(existing) return existing.id;
+  const meta={name:filename, parents:[folderId]};
+  const form=new FormData();
+  form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+  form.append('file',blob);
+  const res=await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    {method:'POST',headers:{Authorization:'Bearer '+gdriveToken},body:form}
+  ).then(r=>r.json());
+  return res.id;
+}
+
+// Drive 파일 내용 다운로드 → text
+async function driveDownloadText(fileId){
+  requireGdriveToken();
+  const resp=await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    {headers:{Authorization:'Bearer '+gdriveToken}}
+  );
+  if(!resp.ok)throw new Error('파일 다운로드 실패: '+resp.statusText);
+  return resp.text();
+}
+
+// Drive 파일 → Blob URL
+async function driveDownloadAsObjectUrl(fileId){
+  requireGdriveToken();
+  const resp=await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    {headers:{Authorization:'Bearer '+gdriveToken}}
+  );
+  if(!resp.ok)throw new Error('에셋 다운로드 실패');
+  const blob=await resp.blob();
+  return URL.createObjectURL(blob);
+}
+
+// refboard-assets 폴더 ID 확보 (없으면 생성)
+async function ensureAssetFolder(){
+  if(gdriveFolderId) return gdriveFolderId;
+  const existing=await driveFindFile(GDRIVE_FOLDER_NAME);
+  if(existing){gdriveFolderId=existing.id;return gdriveFolderId;}
+  const created=await driveRequest('POST','/files',{},{
+    name:GDRIVE_FOLDER_NAME,
+    mimeType:'application/vnd.google-apps.folder'
+  });
+  gdriveFolderId=created.id;
+  return gdriveFolderId;
+}
+
+// ─── GOOGLE DRIVE — 저장 ───────────────────────────────────────────────────
+async function saveToDrive(){
+  try{
+    requireGdriveToken();
+    updateGdriveStatus('저장 중...',true);
+    const folderId=await ensureAssetFolder();
+
+    // 이미지/캐러셀 data:URL → Drive에 올리고 fileId 기록
+    const serialized=[];
+    for(const item of items){
+      const plain={...item};
+      delete plain.thumb; delete plain.frames;
+
+      // src가 data:URL인 경우 Drive에 올림
+      if(typeof plain.src==='string'&&plain.src.startsWith('data:')){
+        const assetId=await driveUploadAsset(item,plain.src,folderId);
+        plain.src=null;
+        plain.driveAssetId=assetId;
+      }
+      // 캐러셀 images도 각각 올림
+      if(Array.isArray(plain.images)){
+        const uploadedIds=[];
+        for(const src of plain.images){
+          if(typeof src==='string'&&src.startsWith('data:')){
+            const fakeItem={...item,id:item.id+'_c'+uploadedIds.length};
+            uploadedIds.push(await driveUploadAsset(fakeItem,src,folderId));
+          } else if(typeof src==='string'&&src.startsWith('blob:')){
+            // blob → fetch → upload
+            try{
+              const r=await fetch(src); const b=await r.blob();
+              const du=await blobToDataUrl(b);
+              const fakeItem={...item,id:item.id+'_c'+uploadedIds.length};
+              uploadedIds.push(await driveUploadAsset(fakeItem,du,folderId));
+            }catch(e){uploadedIds.push(null);}
+          } else {
+            uploadedIds.push(null); // 원본 URL 유지
+          }
+        }
+        plain.driveImageIds=uploadedIds;
+        plain.images=plain.images.map((src,i)=>uploadedIds[i]?null:src);
+      }
+      // blob:URL도 변환
+      if(typeof plain.src==='string'&&plain.src.startsWith('blob:')){
+        try{
+          const r=await fetch(plain.src);const b=await r.blob();
+          const du=await blobToDataUrl(b);
+          const assetId=await driveUploadAsset(item,du,folderId);
+          plain.src=null; plain.driveAssetId=assetId;
+        }catch(e){}
+      }
+      serialized.push(plain);
+    }
+
+    const exportData={groups,categories,items:serialized,savedAt:new Date().toISOString(),version:2};
+    // refboard-data.json 존재 여부 확인
+    if(!gdriveDataFileId){
+      const f=await driveFindFile(GDRIVE_JSON_NAME);
+      if(f) gdriveDataFileId=f.id;
+    }
+    const res=await driveUploadJson(GDRIVE_JSON_NAME,exportData,gdriveDataFileId||null);
+    if(res&&res.id) gdriveDataFileId=res.id;
+
+    updateGdriveStatus('Drive 저장 완료 ✓',true);
+    showToast('Google Drive에 저장했어요','success');
+  }catch(e){
+    console.error(e);
+    updateGdriveStatus('저장 실패',false);
+    showToast(e.message||'Drive 저장 실패','error');
   }
 }
 
-function isExternalFsSupported(){
-  return typeof window.showDirectoryPicker==='function';
+// ─── GOOGLE DRIVE — 불러오기 ───────────────────────────────────────────────
+async function loadFromDrive(){
+  try{
+    requireGdriveToken();
+    updateGdriveStatus('불러오는 중...',true);
+
+    if(!gdriveDataFileId){
+      const f=await driveFindFile(GDRIVE_JSON_NAME);
+      if(!f)throw new Error('Drive에 저장된 데이터가 없어요. 먼저 "Drive 저장"을 해주세요.');
+      gdriveDataFileId=f.id;
+    }
+    const text=await driveDownloadText(gdriveDataFileId);
+    const data=JSON.parse(text);
+
+    groups=data.groups||[];
+    categories=(data.categories||[]).map(c=>({groupId:null,...c}));
+
+    const loaded=[];
+    for(const raw of (data.items||[])){
+      const item={...raw};
+      item.catIds=item.catIds||[item.catId].filter(Boolean);
+
+      // 단일 에셋 복원
+      if(item.driveAssetId&&!item.src){
+        try{ item.src=await driveDownloadAsObjectUrl(item.driveAssetId); }
+        catch(e){ console.warn('에셋 복원 실패',e); item.src=''; }
+      }
+      // 캐러셀 이미지 복원
+      if(Array.isArray(item.driveImageIds)){
+        item.images=(item.images||[]).map((src,i)=>{
+          // null이면 Drive에서 받아야 함 — 비동기라 placeholder, 후에 교체
+          return src||null;
+        });
+        // 비동기로 각 이미지 다운로드
+        const origImages=[...(item.images||[])];
+        const ids=item.driveImageIds;
+        (async()=>{
+          const filled=await Promise.all(origImages.map(async(src,i)=>{
+            if(src)return src;
+            if(ids[i]){try{return await driveDownloadAsObjectUrl(ids[i]);}catch(e){return '';}}
+            return '';
+          }));
+          item.images=filled;
+          if(!item.src) item.src=filled[0]||'';
+          renderBoard();
+        })();
+      }
+
+      if(item.src||item.driveAssetId) loaded.push(item);
+    }
+    items=loaded;
+    selectedId=null;
+    await saveData();
+    renderBoard();
+    if(currentTab==='ai')refreshAiTab();
+    updateGdriveStatus('Drive 불러오기 완료 ✓',true);
+    showToast('Drive 데이터 불러오기 완료','success');
+  }catch(e){
+    console.error(e);
+    updateGdriveStatus('불러오기 실패',false);
+    showToast(e.message||'Drive 불러오기 실패','error');
+  }
 }
 
-async function ensureExternalPermission(mode='readwrite'){
-  if(!externalDirHandle)throw new Error('먼저 USB 폴더를 연결해주세요.');
-  if((await externalDirHandle.queryPermission({mode}))==='granted')return true;
-  if((await externalDirHandle.requestPermission({mode}))==='granted')return true;
-  throw new Error('폴더 접근 권한이 필요해요.');
+// ─── GOOGLE DRIVE — SETUP 모달 ─────────────────────────────────────────────
+function openGdriveSetup(){
+  const cur=getGdriveClientId();
+  const id=prompt(
+    'Google Cloud Console에서 발급한 OAuth 2.0 클라이언트 ID를 입력하세요.\n\n' +
+    '발급: console.cloud.google.com → API 및 서비스 → 사용자 인증 정보 → OAuth 2.0 클라이언트 ID\n' +
+    '※ 애플리케이션 유형: "웹 애플리케이션"\n' +
+    '※ 승인된 JavaScript 원본: 이 앱의 URL (예: https://yourid.github.io)\n' +
+    '※ 승인된 리디렉션 URI: 동일 URL\n',
+    cur
+  );
+  if(id===null) return; // 취소
+  if(!id.trim()){showToast('Client ID를 입력해주세요','error');return;}
+  saveGdriveClientId(id);
+  document.getElementById('gdrive-setup-banner').style.display='none';
+  showToast('Client ID 저장됨. 이제 "Google 연결"을 눌러주세요','success');
 }
 
+// ─── UTILS (이전 USB에서 공용으로 유지) ────────────────────────────────────
 function dataUrlToBlob(dataUrl){
   const [meta,data]=dataUrl.split(',');
   const mime=(meta.match(/data:([^;]+)/)||[])[1]||'application/octet-stream';
-  const bin=atob(data);
-  const len=bin.length;
-  const arr=new Uint8Array(len);
+  const bin=atob(data);const len=bin.length;const arr=new Uint8Array(len);
   for(let i=0;i<len;i++)arr[i]=bin.charCodeAt(i);
   return new Blob([arr],{type:mime});
 }
-
+function blobToDataUrl(blob){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=reject;
+    reader.readAsDataURL(blob);
+  });
+}
 function extFromMime(mime=''){
   const m=mime.toLowerCase();
-  if(m.includes('jpeg'))return 'jpg';
-  if(m.includes('png'))return 'png';
-  if(m.includes('gif'))return 'gif';
-  if(m.includes('webp'))return 'webp';
-  if(m.includes('svg'))return 'svg';
-  if(m.includes('mp4'))return 'mp4';
-  if(m.includes('webm'))return 'webm';
-  if(m.includes('ogg'))return 'ogg';
-  if(m.includes('quicktime'))return 'mov';
-  return 'bin';
+  if(m.includes('jpeg'))return 'jpg';if(m.includes('png'))return 'png';
+  if(m.includes('gif'))return 'gif';if(m.includes('webp'))return 'webp';
+  if(m.includes('svg'))return 'svg';if(m.includes('mp4'))return 'mp4';
+  if(m.includes('webm'))return 'webm';if(m.includes('ogg'))return 'ogg';
+  if(m.includes('quicktime'))return 'mov';return 'bin';
 }
-
 function safeFileBase(name='reference'){
   return String(name||'reference').replace(/[\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim()||'reference';
 }
 
-async function blobToObjectUrl(blob){
-  return URL.createObjectURL(blob);
-}
 
-async function writeDataBlobToAssets(assetsDir,item,dataUrl){
-  const blob=dataUrlToBlob(dataUrl);
-  const ext=extFromMime(blob.type);
-  const filename=`${item.id}_${safeFileBase(item.title)}.${ext}`;
-  const handle=await assetsDir.getFileHandle(filename,{create:true});
-  const writable=await handle.createWritable();
-  await writable.write(blob);
-  await writable.close();
-  return 'assets/'+filename;
-}
-
-async function readAssetAsObjectUrl(assetPath){
-  if(!externalDirHandle)throw new Error('연결된 폴더가 없어요.');
-  const [dirName,fileName]=assetPath.split('/');
-  const dirHandle=await externalDirHandle.getDirectoryHandle(dirName,{create:false});
-  const fileHandle=await dirHandle.getFileHandle(fileName,{create:false});
-  const file=await fileHandle.getFile();
-  return URL.createObjectURL(file);
-}
-
-async function serializeItemsForExternalSave(){
-  if(!externalDirHandle)throw new Error('먼저 USB 폴더를 연결해주세요.');
-  await ensureExternalPermission('readwrite');
-  const assetsDir=await externalDirHandle.getDirectoryHandle('assets',{create:true});
-  const serialized=[];
-  for(const item of items){
-    const plain={...item};
-    delete plain.thumb;
-    delete plain.src;
-    delete plain.assetPath;
-    if(typeof item.src==='string' && item.src.startsWith('data:')){
-      plain.assetPath=await writeDataBlobToAssets(assetsDir,item,item.src);
-    }else{
-      plain.src=item.src;
-      if(item.assetPath)plain.assetPath=item.assetPath;
-    }
-    serialized.push(plain);
-  }
-  return serialized;
-}
-
-async function connectExternalFolder(){
-  try{
-    if(!isExternalFsSupported())throw new Error('이 브라우저에서는 USB 폴더 연결을 지원하지 않아요. 크롬 또는 엣지를 사용해주세요.');
-    const handle=await window.showDirectoryPicker({mode:'readwrite'});
-    externalDirHandle=handle;
-    externalConnectedName=handle.name||'선택된 폴더';
-    await saveExternalHandle(handle);
-    const banner=document.getElementById('usb-reconnect-banner');
-    if(banner)banner.style.display='none';
-    updateUsbStatus('연결 완료',true);
-    showToast('USB 폴더가 연결됐어요','success');
-  }catch(e){
-    if(e && e.name==='AbortError')return;
-    showToast(e.message||'USB 연결 실패','error');
-  }
-}
-
-async function saveToExternalFolder(){
-  try{
-    if(!externalDirHandle)throw new Error('먼저 USB 폴더를 연결해주세요.');
-    const exportData={groups,categories,items:await serializeItemsForExternalSave(),savedAt:new Date().toISOString(),version:1};
-    const fileHandle=await externalDirHandle.getFileHandle('refboard-data.json',{create:true});
-    const writable=await fileHandle.createWritable();
-    await writable.write(JSON.stringify(exportData,null,2));
-    await writable.close();
-    updateUsbStatus('저장 완료',true);
-    showToast('USB 폴더에 저장했어요','success');
-  }catch(e){
-    console.error(e);
-    showToast(e.message||'USB 저장 실패','error');
-  }
-}
-
-async function loadFromExternalFolder(){
-  try{
-    if(!externalDirHandle)throw new Error('먼저 USB 폴더를 연결해주세요.');
-    await ensureExternalPermission('read');
-    const fileHandle=await externalDirHandle.getFileHandle('refboard-data.json',{create:false});
-    const file=await fileHandle.getFile();
-    const data=JSON.parse(await file.text());
-    groups=data.groups||[];
-    categories=(data.categories||[]).map(c=>({groupId:null,...c}));
-    const loaded=[];
-    for(const raw of (data.items||[])){
-      const item={...raw};
-      if(item.assetPath){
-        try{ item.src=await readAssetAsObjectUrl(item.assetPath); }
-        catch(err){ console.warn('에셋 복원 실패',item.assetPath,err); item.src=''; }
-      }
-      item.catIds=item.catIds||[item.catId].filter(Boolean);
-      loaded.push(item);
-    }
-    items=loaded.filter(it=>!!it.src);
-    selectedId=null;
-    await saveData();
-    // 재연결 배너 숨기기
-    const banner=document.getElementById('usb-reconnect-banner');
-    if(banner)banner.style.display='none';
-    renderBoard();
-    if(currentTab==='ai')refreshAiTab();
-    updateUsbStatus('불러오기 완료',true);
-    showToast('USB 데이터 불러오기 완료','success');
-  }catch(e){
-    console.error(e);
-    showToast(e.message||'USB 불러오기 실패','error');
-  }
-}
 
 // ─── TAB SWITCH ───
 function toggleAiPanel(){
@@ -1540,14 +1723,6 @@ function parseDataUrl(src){
   return {mediaType:mt,data:d,dataUrl:src};
 }
 
-function blobToDataUrl(blob){
-  return new Promise((resolve,reject)=>{
-    const reader=new FileReader();
-    reader.onload=()=>resolve(reader.result);
-    reader.onerror=reject;
-    reader.readAsDataURL(blob);
-  });
-}
 
 async function normalizeImageSource(src, fallbackMime='image/jpeg'){
   if(!src)return null;
@@ -1993,79 +2168,17 @@ function showToast(msg,type=''){
   clearTimeout(t._t);t._t=setTimeout(()=>{t.className='';},2500);
 }
 
-// ─── USB 자동 재연결 ───
-// 앱 시작 시 저장된 핸들이 있으면:
-//   1) 권한이 이미 granted → 자동으로 USB 데이터 불러오기
-//   2) 권한이 prompt → 배너 표시 후 클릭 한 번으로 재연결+불러오기
-//   3) 권한이 denied  → USB 미연결 상태 유지
-
-async function tryAutoLoadFromHandle(handle){
-  try{
-    externalDirHandle=handle;
-    externalConnectedName=handle.name||'선택된 폴더';
-    // refboard-data.json 존재 여부 확인 (파일이 없으면 연결만)
-    let hasData=false;
-    try{ await handle.getFileHandle('refboard-data.json',{create:false}); hasData=true; }catch(e){}
-    if(hasData){
-      await loadFromExternalFolder();   // 내부에서 ensureExternalPermission 호출
-    } else {
-      updateUsbStatus('연결됨 (데이터 없음)',true);
-    }
-  }catch(e){
-    console.warn('USB 자동 불러오기 실패',e);
-    // 권한 오류 등으로 실패하면 상태만 초기화
-    externalDirHandle=handle;
-    externalConnectedName=handle.name||'선택된 폴더';
-    updateUsbStatus('USB 미연결',false);
-  }
-}
-
-async function autoReconnectUsb(){
-  const banner=document.getElementById('usb-reconnect-banner');
-  if(banner){ banner.textContent='연결 중...'; banner.disabled=true; }
-  try{
-    if(!externalDirHandle){ updateUsbStatus('USB 미연결',false); return; }
-    const perm=await externalDirHandle.requestPermission({mode:'readwrite'});
-    if(perm==='granted'){
-      if(banner)banner.style.display='none';
-      await tryAutoLoadFromHandle(externalDirHandle);
-    } else {
-      updateUsbStatus('USB 미연결 (권한 거부)',false);
-      if(banner){ banner.textContent='⚡ USB 클릭하여 재연결'; banner.disabled=false; }
-    }
-  }catch(e){
-    console.warn('재연결 실패',e);
-    if(banner){ banner.textContent='⚡ USB 클릭하여 재연결'; banner.disabled=false; }
-  }
-}
-
 // ─── INIT ───
 (async()=>{
   await loadData();
-  const savedHandle=await loadExternalHandle();
-  if(savedHandle){
-    externalDirHandle=savedHandle;
-    externalConnectedName=savedHandle.name||'선택된 폴더';
-    // 현재 권한 상태 조회 (제스처 없이 가능)
-    let perm='prompt';
-    try{ perm=await savedHandle.queryPermission({mode:'readwrite'}); }catch(e){}
-
-    if(perm==='granted'){
-      // 권한 유지 중 → 자동 불러오기
-      updateUsbStatus('재연결 중...',true);
-      await tryAutoLoadFromHandle(savedHandle);
-    } else if(perm==='prompt'){
-      // 권한 재요청 필요 → 배너 표시 (사용자 클릭 필요)
-      updateUsbStatus('USB 재연결 필요',false);
-      const banner=document.getElementById('usb-reconnect-banner');
-      if(banner)banner.style.display='';
-    } else {
-      // denied
-      updateUsbStatus('USB 미연결',false);
-    }
-  }else{
-    updateUsbStatus('USB 미연결',false);
+  // Google Drive 토큰 복원 시도 (localStorage)
+  tryRestoreGdriveToken();
+  // Client ID 미설정이면 배너 표시
+  if(!getGdriveClientId()){
+    const banner=document.getElementById('gdrive-setup-banner');
+    if(banner) banner.style.display='';
   }
   renderBoard();
   document.querySelector('[data-sort="newest"]').classList.add('active');
 })();
+
