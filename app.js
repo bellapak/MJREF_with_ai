@@ -1,27 +1,31 @@
-// 버빗 브랜드 가이드
-const BRAND_RULES = "이모지 사용 절대 금지. Bubbitler를 위한 깊이 있는 텍스트 힙 스타일. 캐릭터 비율 왜곡 금지.";
+import { loadData, renderBoard } from './modules/render.js';
+import { handlePaste, connectUsb } from './modules/actions.js';
 
-// 이미지 불러오기 (기존 USB 로직 통합)
-async function connectFolder() {
-    try {
-        const handle = await window.showDirectoryPicker();
-        document.getElementById('status').textContent = 'Bubbitler 데이터 연동 완료';
-        // 여기서 파일 목록 스캔 로직 추가
-    } catch (e) { console.error(e); }
-}
-
-// AI 리포트 생성 (버빗 전용)
-export function renderBubbitReport(data) {
+// 브랜드 가이드 적용: Bubbitler 전용 함수
+export function getBubbitlerPrompt(data) {
     return `
-[분석 리포트]
-의도: ${data.intent}
-캐릭터 상태: 비율 일치
-제언: ${data.insight}
-
-[실무 프롬프트]
-"위 분석을 바탕으로 Bubbitler에게 전달할 SNS 카피 작성.
-규칙: ${BRAND_RULES}"
+[분석 결과]
+${data.insight}
+(규칙: 이모지 사용 금지, Bubbitler 어조 유지)
     `.trim();
 }
 
-document.getElementById('usb-connect').addEventListener('click', connectFolder);
+// 구글 드라이브 이미지 경로 자동 생성
+export function getAssetUrl(item) {
+    // 깃허브 배포 시 에셋 경로 또는 구글 드라이브 ID 활용
+    if (item.driveFileId) {
+        return `https://lh3.googleusercontent.com/d/${item.driveFileId}`;
+    }
+    return item.assetPath || ''; 
+}
+
+// 초기화 로직
+async function init() {
+    await loadData();
+    renderBoard();
+    
+    document.getElementById('usb-connect').addEventListener('click', connectUsb);
+    document.addEventListener('paste', handlePaste);
+}
+
+init();
