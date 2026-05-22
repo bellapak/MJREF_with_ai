@@ -1,27 +1,344 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <title>Bubbit Reference Hub</title>
-    <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>메타광고 / 인스타그램 컨텐츠 수집</title>
+<link rel="stylesheet" href="styles.css">
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div id="app">
-        <aside id="sidebar">
-            <div class="brand-header">Bubbitler Hub</div>
-            <button id="usb-connect">⚡ USB/폴더 연결</button>
-            <div id="group-list"></div>
-            <button id="add-group">+ 그룹 추가</button>
-        </aside>
-        
-        <main id="board-container">
-            <header id="controls">
-                <input type="text" id="search-bar" placeholder="검색어를 입력하세요">
-                <div id="filter-group"></div>
-            </header>
-            <div id="board"></div>
-        </main>
+
+<div id="app">
+
+<!-- SIDEBAR OVERLAY (mobile) -->
+<div id="sidebar-overlay" onclick="closeMobileSidebar()"></div>
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <button id="sidebar-toggle" onclick="toggleMobileSidebar()" title="카테고리 열기">☰</button>
+  <div id="logo-wrap">
+    <span id="logo-sub">레퍼런스 수집 도구</span>
+    <span id="logo-main">메타광고 / 인스타그램</span>
+  </div>
+  <div style="width:1px;height:24px;background:var(--b2);margin:0 4px;"></div>
+  <button class="tb-btn tab-btn active" id="tab-board" onclick="switchTab('board')">보드</button>
+  <button class="tb-btn tab-btn" id="tab-ai" onclick="toggleAiPanel()">AI 분석</button>
+  <div style="width:1px;height:24px;background:var(--b2);margin:0 4px;"></div>
+  <button class="tb-btn primary" onclick="openAddModal()">+ 추가</button>
+  <button class="tb-btn" onclick="document.getElementById('make-json-input').click()">Make JSON 가져오기</button>
+  <button class="tb-btn" onclick="copyMakeJsonTemplate()">JSON 구조 복사</button>
+  <input type="file" id="make-json-input" accept="application/json,.json" style="display:none" onchange="importMakeJsonFile(event)">
+  <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
+  <button class="tb-btn" onclick="connectExternalFolder()">USB 연결</button>
+  <button class="tb-btn" onclick="saveToExternalFolder()">USB 저장</button>
+  <button class="tb-btn" onclick="loadFromExternalFolder()">USB 불러오기</button>
+
+  <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
+  <div id="usb-status" style="font-size:11px;color:var(--t3);white-space:nowrap;">USB 미연결</div>
+  <!-- USB 재연결 배너: 핸들은 있지만 권한 재요청이 필요할 때 표시 -->
+  <button id="usb-reconnect-banner" onclick="autoReconnectUsb()" style="display:none;background:rgba(255,159,10,0.18);border:1px solid rgba(255,159,10,0.45);color:var(--orange);font-family:var(--fn);font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s;" onmouseover="this.style.background='rgba(255,159,10,0.28)'" onmouseout="this.style.background='rgba(255,159,10,0.18)'">⚡ USB 클릭하여 재연결</button>
+  <div id="autosave-indicator" style="font-size:10px;color:var(--t3);white-space:nowrap;transition:color .3s;" title="자동저장 상태">●</div>
+  <div id="search-wrap">
+    <span id="search-icon">검색</span>
+    <input id="search-input" placeholder="검색..." oninput="debouncedRenderBoard()">
+  </div>
+  <span class="spacer"></span>
+  <span id="count-label">0개</span>
+  <div class="view-toggle">
+    <button class="vt-btn active" id="grid-btn" title="그리드 뷰" onclick="setView('grid')">⊞</button>
+    <button class="vt-btn" id="list-btn" title="리스트 뷰" onclick="setView('list')">≡</button>
+  </div>
+</div>
+
+<div id="main">
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="sb-section">타입</div>
+    <button class="sb-btn active" data-filter="all" onclick="setFilter('all',this)">
+      <span class="dot" style="background:var(--t3)"></span>전체<span class="cnt" id="cnt-all">0</span>
+    </button>
+    <button class="sb-btn" data-filter="image" onclick="setFilter('image',this)">
+      <span class="dot" style="background:var(--blue)"></span>이미지<span class="cnt" id="cnt-image">0</span>
+    </button>
+    <button class="sb-btn" data-filter="video" onclick="setFilter('video',this)">
+      <span class="dot" style="background:var(--accent2)"></span>영상<span class="cnt" id="cnt-video">0</span>
+    </button>
+    <button class="sb-btn" data-filter="carousel" onclick="setFilter('carousel',this)">
+      <span class="dot" style="background:var(--orange)"></span>캐러셀<span class="cnt" id="cnt-carousel">0</span>
+    </button>
+    <button class="sb-btn" data-filter="link" onclick="setFilter('link',this)">
+      <span class="dot" style="background:var(--accent)"></span>링크<span class="cnt" id="cnt-link">0</span>
+    </button>
+    <hr class="sb-divider">
+    <div class="sb-section">카테고리</div>
+    <div id="cat-list"></div>
+    <div style="display:flex;gap:4px;margin-top:4px;">
+      <button class="add-cat-btn" style="flex:1" onclick="showNewGroupForm()">+ 대분류 추가</button>
+      <button class="add-cat-btn" style="flex:1" onclick="showNewCatForm()">+ 소분류 추가</button>
     </div>
-    <script type="module" src="app.js"></script>
+    <!-- 대분류 추가 폼 -->
+    <div id="new-group-form" style="display:none" class="cat-edit-form">
+      <input id="new-group-name" placeholder="대분류 이름" maxlength="20">
+      <div class="color-swatch-row" id="new-group-colors"></div>
+      <div class="edit-actions">
+        <button class="cedit-save" onclick="saveNewGroup()">추가</button>
+        <button class="cedit-cancel" onclick="hideNewGroupForm()">취소</button>
+      </div>
+    </div>
+    <!-- 소분류 추가 폼 -->
+    <div id="new-cat-form" style="display:none" class="cat-edit-form">
+      <input id="new-cat-name" placeholder="소분류 이름" maxlength="24">
+      <select id="new-cat-group" style="background:var(--s3);border:1px solid var(--b3);color:var(--t1);font-family:var(--fn);font-size:12px;padding:6px 9px;border-radius:6px;outline:none;width:100%;">
+        <option value="">그룹 없음</option>
+      </select>
+      <div class="color-swatch-row" id="new-cat-colors"></div>
+      <div class="edit-actions">
+        <button class="cedit-save" onclick="saveNewCat()">추가</button>
+        <button class="cedit-cancel" onclick="hideNewCatForm()">취소</button>
+      </div>
+    </div>
+    <hr class="sb-divider">
+    <div class="sb-section">정렬</div>
+    <button class="sb-btn active" data-sort="newest" onclick="setSort('newest',this)"><span class="dot" style="background:var(--t3)"></span>최신순</button>
+    <button class="sb-btn" data-sort="oldest" onclick="setSort('oldest',this)"><span class="dot" style="background:var(--t3)"></span>오래된순</button>
+    <button class="sb-btn" data-sort="title" onclick="setSort('title',this)"><span class="dot" style="background:var(--t3)"></span>이름순</button>
+  </div>
+
+  <!-- BOARD AREA -->
+  <div id="board-area">
+    <!-- BOARD TAB -->
+    <div id="board-wrap">
+      <div id="board" class="grid-view">
+        <div id="drop-zone" tabindex="0"
+          ondragover="onDragOver(event)" ondragleave="onDragLeave()" ondrop="onDrop(event)"
+          onclick="dzClick(event)" onpaste="onDzPaste(event)"
+          onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('file-input').click()">
+          <div class="dz-icon">＋</div>
+          이미지 · 영상을 드래그하거나<br>
+          <span style="color:var(--accent)">클릭해서 파일 선택</span><br>
+          <span style="font-size:11px;color:rgba(235,235,245,0.25)">Ctrl+V 로 이미지 또는 URL 붙여넣기 가능</span><br>
+          <button id="paste-btn" onclick="tryClipboardPaste(event)" style="margin-top:8px;background:rgba(10,132,255,0.15);border:1px solid rgba(10,132,255,0.35);color:var(--accent);font-family:var(--fn);font-size:11px;font-weight:500;padding:5px 14px;border-radius:8px;cursor:pointer;transition:all .15s;" onmouseover="this.style.background='rgba(10,132,255,0.25)'" onmouseout="this.style.background='rgba(10,132,255,0.15)'">클립보드에서 붙여넣기</button>
+        </div>
+        <div id="empty-state" style="display:none">
+          검색 결과가 없어요 검색<br>
+          <span style="font-size:11px;color:var(--t4)">다른 검색어나 필터를 사용해보세요</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI TAB -->
+    <div id="ai-tab">
+      <div class="ai-floating-head">
+        <div class="ai-floating-title"><strong>AI 분석</strong><span>보드를 보면서 바로 분석하기</span></div>
+        <button id="ai-floating-close" onclick="switchTab('board')" title="AI 패널 닫기">×</button>
+      </div>
+
+      <!-- API KEY SETTINGS -->
+      <div class="ai-panel">
+        <h3>AI 설정</h3>
+        <p class="ai-desc">사용할 AI 서비스와 API 키를 설정하세요. 키는 이 브라우저의 localStorage에만 저장돼요.</p>
+        <div class="api-key-row">
+          <select id="ai-provider" onchange="onProviderChange()">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI (GPT-4o)</option>
+            <option value="google">Google (Gemini)</option>
+          </select>
+          <input type="password" id="ai-apikey-input" placeholder="API 키 입력...">
+          <button class="api-save-btn" onclick="saveApiKey()">저장</button>
+        </div>
+        <div id="api-key-status" class="api-key-status" style="margin-top:6px;display:none">✓ 저장됨</div>
+        <div id="api-key-hint" style="font-size:11px;color:var(--t3);margin-top:6px;line-height:1.7;"></div>
+      </div>
+
+      <!-- SINGLE ITEM ANALYSIS -->
+      <div class="ai-panel">
+        <h3>검색 레퍼런스 분석</h3>
+        <p class="ai-desc">분석할 레퍼런스를 선택하고 분석 유형을 골라주세요. 이미지·영상 모두 지원해요.</p>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:8px;">레퍼런스 선택 (복수 선택 가능)</div>
+        <div class="ai-filter-bar">
+          <select id="ai-group-filter" class="ai-filter-select" onchange="onAiGroupFilterChange()">
+            <option value="">전체 대분류</option>
+          </select>
+          <select id="ai-cat-filter" class="ai-filter-select" onchange="onAiCatFilterChange()">
+            <option value="">전체 소분류</option>
+          </select>
+          <button class="ai-mini-btn" onclick="selectAllVisibleAiTargets()">보이는 항목 전체 선택</button>
+          <button class="ai-mini-btn" onclick="clearVisibleAiTargets()">보이는 항목 선택 해제</button>
+        </div>
+        <div class="ai-filter-meta" id="ai-filter-meta">전체 레퍼런스를 표시 중</div>
+        <div class="ai-target-selector" id="ai-target-selector"></div>
+        <div style="font-size:11px;color:var(--t2);margin:10px 0 6px;">분석 유형</div>
+        <div class="ai-options" id="ai-options">
+          <button class="ai-opt-btn selected" data-opt="mood">무드 & 색상</button>
+          <button class="ai-opt-btn" data-opt="layout">레이아웃 구조</button>
+          <button class="ai-opt-btn" data-opt="copy">카피 & 문장 구조</button>
+          <button class="ai-opt-btn" data-opt="strategy">광고 전략</button>
+          <button class="ai-opt-btn" data-opt="storyboard">스토리보드 추출</button>
+          <button class="ai-opt-btn" data-opt="script">대사 / 자막 추출</button>
+          <button class="ai-opt-btn" data-opt="hook">훅 포인트 분석</button>
+          <button class="ai-opt-btn" data-opt="abtest">마케팅 A/B 테스트</button>
+        </div>
+        <button class="ai-run-btn" id="ai-run-btn" onclick="runSingleAnalysis()">✦ 분석 시작</button>
+        <div class="ai-result-area" id="ai-single-result"></div>
+      </div>
+
+      <!-- BOARD SYNTHESIS -->
+      <div class="ai-panel">
+        <h3>✦ 전체 보드 종합 분석</h3>
+        <p class="ai-desc">수집된 레퍼런스 전체를 바탕으로 공통 무드·방향성·콘텐츠 전략을 도출해요.</p>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">이미지 <span id="board-img-cnt" style="color:var(--t1);font-weight:500">0</span>개 · 영상 <span id="board-vid-cnt" style="color:var(--t1);font-weight:500">0</span>개 수집됨</div>
+        <button class="ai-run-btn" id="ai-batch-run-btn" onclick="runBatchAnalysis()">✦ 전체 분석 시작</button>
+        <div class="ai-result-area" id="ai-batch-result"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- DETAIL PANEL -->
+  <div id="detail-panel">
+    <button id="detail-close" onclick="closeDetail()">×</button>
+    <div id="detail-media"></div>
+    <hr class="detail-divider">
+    <div class="detail-section-title">카테고리 (다중 선택)</div>
+    <div id="detail-cat-options"></div>
+    <hr class="detail-divider">
+    <div id="detail-fields"></div>
+  </div>
+</div>
+
+<!-- RIGHT SIDE AI ACCORDION HANDLE -->
+<button id="ai-side-handle" onclick="toggleAiPanel()" title="AI 분석 패널 열기">
+  <span class="handle-mark">‹</span>
+  <span class="handle-label">AI 분석</span>
+</button>
+
+<!-- ADD MODAL -->
+<div class="modal-overlay" id="add-modal" onclick="if(event.target.id==='add-modal')closeModal('add-modal')">
+  <div class="modal-box">
+    <h3>레퍼런스 추가</h3>
+    <!-- 타입 선택 탭 -->
+    <div style="display:flex;gap:6px;margin-bottom:18px;background:var(--s3);border-radius:10px;padding:3px;">
+      <button id="modal-tab-single" onclick="switchModalTab('single')" style="flex:1;padding:7px;border:none;border-radius:8px;font-family:var(--fn);font-size:12px;font-weight:600;cursor:pointer;background:var(--accent);color:#fff;transition:all .15s;">📷 단일</button>
+      <button id="modal-tab-carousel" onclick="switchModalTab('carousel')" style="flex:1;padding:7px;border:none;border-radius:8px;font-family:var(--fn);font-size:12px;font-weight:600;cursor:pointer;background:none;color:rgba(235,235,245,0.5);transition:all .15s;">🎠 캐러셀</button>
+    </div>
+    <div class="form-row">
+      <label class="form-label">제목</label>
+      <input class="form-input" id="add-title" placeholder="레퍼런스 제목">
+    </div>
+    <div class="form-row">
+      <label class="form-label">카테고리 (복수 선택 가능)</label>
+      <div id="modal-cat-options"></div>
+    </div>
+    <div class="data-card" style="margin-bottom:14px;">
+      <div class="form-grid-3">
+        <div class="form-row" style="margin-bottom:0;">
+          <label class="form-label">플랫폼</label>
+          <select class="form-input soft" id="add-platform">
+            <option value="instagram">Instagram</option>
+            <option value="meta_ad">Meta Ad</option>
+            <option value="tiktok">TikTok</option>
+            <option value="youtube">YouTube</option>
+            <option value="pinterest">Pinterest</option>
+            <option value="web">Web</option>
+            <option value="etc">기타</option>
+          </select>
+        </div>
+        <div class="form-row" style="margin-bottom:0;">
+          <label class="form-label">브랜드</label>
+          <input class="form-input soft" id="add-brand" placeholder="예: Aesop, Lush">
+        </div>
+        <div class="form-row" style="margin-bottom:0;">
+          <label class="form-label">소스 타입</label>
+          <select class="form-input soft" id="add-source-type">
+            <option value="snippit">Snippit</option>
+            <option value="manual">Manual</option>
+            <option value="meta_library">Meta Library</option>
+            <option value="instagram_saved">Instagram Saved</option>
+            <option value="make">Make</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:10px;margin-bottom:0;">
+        <label class="form-label">원본 링크</label>
+        <input class="form-input soft" id="add-source-url" placeholder="게시물/광고/스니핏 원본 URL">
+      </div>
+    </div>
+
+    <!-- 단일 아이템 폼 -->
+    <div id="modal-single-section">
+      <div class="form-row">
+        <label class="form-label">이미지 / 영상 URL</label>
+        <div id="url-row">
+          <input class="form-input" id="add-url" placeholder="https://... (이미지, 영상, 또는 웹사이트 URL)">
+          <button id="url-add-btn" onclick="addFromUrl()">추가</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">또는 파일 업로드</label>
+        <button class="tb-btn" style="width:100%" onclick="document.getElementById('modal-file').click()">파일 선택</button>
+        <input type="file" id="modal-file" accept="image/*,video/*" style="display:none" onchange="handleModalFile(event)">
+        <div id="modal-file-name" style="font-size:11px;color:var(--t2);margin-top:5px"></div>
+      </div>
+    </div>
+    <!-- 캐러셀 아이템 폼 -->
+    <div id="modal-carousel-section" style="display:none;">
+      <div class="form-row">
+        <label class="form-label">이미지 여러 장 업로드</label>
+        <button class="tb-btn" style="width:100%" onclick="document.getElementById('carousel-file-input').click()">이미지 선택 (여러 장)</button>
+        <input type="file" id="carousel-file-input" accept="image/*" multiple style="display:none" onchange="handleCarouselFiles(event)">
+      </div>
+      <!-- 캐러셀 미리보기 -->
+      <div id="carousel-preview-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;max-height:200px;overflow-y:auto;"></div>
+      <div id="carousel-count-label" style="font-size:11px;color:var(--t3);margin-top:4px;"></div>
+    </div>
+    <div class="data-card">
+      <div class="form-row">
+        <label class="form-label">본문 / 캡션 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(AI 분석 핵심 입력값)</span></label>
+        <textarea class="form-input soft" id="add-caption" rows="4" placeholder="원문 캡션, 광고 카피, 해시태그를 그대로 넣어주세요."></textarea>
+        <div class="field-helper">Make/Snippit에서 description, text, caption 값이 들어오면 이 칸으로 매핑합니다.</div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row">
+          <label class="form-label">첫 훅 / 헤드라인</label>
+          <input class="form-input soft" id="add-hook" placeholder="예: 설거지가 지루하면 하지 마세요">
+        </div>
+        <div class="form-row">
+          <label class="form-label">CTA</label>
+          <input class="form-input soft" id="add-cta" placeholder="예: 지금 구매하기 / 더 알아보기">
+        </div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row">
+          <label class="form-label">비주얼 분석 메모</label>
+          <textarea class="form-input soft" id="add-visual-notes" rows="3" placeholder="구도, 컬러, 인물/제품 노출, 자막 위치 등"></textarea>
+        </div>
+        <div class="form-row">
+          <label class="form-label">콘텐츠 전략 메모</label>
+          <textarea class="form-input soft" id="add-content-notes" rows="3" placeholder="타겟, 소구점, 감정, 테스트 가설 등"></textarea>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0;">
+        <label class="form-label">메모</label>
+        <textarea class="form-input soft" id="add-notes" rows="2" placeholder="선택사항"></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal('add-modal')">취소</button>
+      <button class="btn-primary" onclick="saveFromModal()">저장</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<!-- NAS/HTTP 환경 붙여넣기 프록시: 포커스를 받아 paste 이벤트를 안정적으로 캐치 -->
+<div id="paste-proxy" contenteditable="true" tabindex="-1"
+  style="position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;overflow:hidden;left:-9999px;top:-9999px;"
+  aria-hidden="true"></div>
+
+
+<script src="app.js"></script>
 </body>
 </html>
