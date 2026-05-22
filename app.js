@@ -486,6 +486,7 @@ async function loadFromDrive(){
     requireGdriveToken();
     updateGdriveStatus('불러오는 중...',true);
 
+    // ── refboard-data.json 파일 ID 확보
     if(!gdriveDataFileId){
       const f=await driveFindFile(GDRIVE_JSON_NAME);
       if(!f)throw new Error('Drive에 저장된 데이터가 없어요. 먼저 "Drive 저장"을 해주세요.');
@@ -497,46 +498,89 @@ async function loadFromDrive(){
     groups=data.groups||[];
     categories=(data.categories||[]).map(c=>({groupId:null,...c}));
 
+    // ── assets 폴더 파일 목록을 한 번에 가져와서 이름→ID 맵 구성
+    // (아이템마다 검색하면 너무 느리므로 일괄 조회)
+    let assetFileMap={};  // { 파일명: fileId }
+    try{
+      const folderRes=await driveFindFile(GDRIVE_FOLDER_NAME);
+      if(folderRes){
+        gdriveFolderId=folderRes.id;
+        let pageToken=null;
+        do{
+          const params={
+            q:`'${gdriveFolderId}' in parents and trashed=false`,
+            fields:'nextPageToken,files(id,name)',
+            pageSize:1000,
+            spaces:'drive'
+          };
+          if(pageToken)params.pageToken=pageToken;
+          const res=await driveRequest('GET','/files',params);
+          (res.files||[]).forEach(f=>{ assetFileMap[f.name]=f.id; });
+          pageToken=res.nextPageToken||null;
+        }while(pageToken);
+      }
+    }catch(e){ console.warn('assets 폴더 목록 조회 실패',e); }
+
+    // ── 파일명 추출 헬퍼 (assetPath: "assets/파일명.mp4" → "파일명.mp4")
+    function assetFilename(assetPath){
+      if(!assetPath)return null;
+      return assetPath.split('/').pop();
+    }
+
     const loaded=[];
     for(const raw of (data.items||[])){
       const item={...raw};
       item.catIds=item.catIds||[item.catId].filter(Boolean);
 
-      // 단일 에셋 복원
-      if(item.driveAssetId&&!item.src){
+      // blob:null/... 또는 null src 처리
+      const srcInvalid=!item.src||item.src.startsWith('blob:');
+
+      // ── 방법1: driveAssetId 로 직접 다운로드
+      if(item.driveAssetId && srcInvalid){
         try{ item.src=await driveDownloadAsObjectUrl(item.driveAssetId); }
-        catch(e){ console.warn('에셋 복원 실패',e); item.src=''; }
-      }
-      // 캐러셀 이미지 복원
-      if(Array.isArray(item.driveImageIds)){
-        item.images=(item.images||[]).map((src,i)=>{
-          // null이면 Drive에서 받아야 함 — 비동기라 placeholder, 후에 교체
-          return src||null;
-        });
-        // 비동기로 각 이미지 다운로드
-        const origImages=[...(item.images||[])];
-        const ids=item.driveImageIds;
-        (async()=>{
-          const filled=await Promise.all(origImages.map(async(src,i)=>{
-            if(src)return src;
-            if(ids[i]){try{return await driveDownloadAsObjectUrl(ids[i]);}catch(e){return '';}}
-            return '';
-          }));
-          item.images=filled;
-          if(!item.src) item.src=filled[0]||'';
-          renderBoard();
-        })();
+        catch(e){ console.warn('driveAssetId 복원 실패',e); item.src=''; }
       }
 
-      if(item.src||item.driveAssetId) loaded.push(item);
+      // ── 방법2: assetPath 파일명으로 Drive assets 폴더에서 찾기
+      if(srcInvalid && item.assetPath){
+        const fname=assetFilename(item.assetPath);
+        const fid=fname&&assetFileMap[fname];
+        if(fid){
+          try{ item.src=await driveDownloadAsObjectUrl(fid); }
+          catch(e){ console.warn('assetPath 복원 실패',fname,e); item.src=''; }
+        }
+      }
+
+      // ── 캐러셀 이미지 복원
+      if(Array.isArray(item.images)&&item.images.length){
+        const restored=[];
+        for(let i=0;i<item.images.length;i++){
+          const src=item.images[i];
+          const srcOk=src&&!src.startsWith('blob:');
+          if(srcOk){ restored.push(src); continue; }
+          // driveImageIds 방식
+          if(Array.isArray(item.driveImageIds)&&item.driveImageIds[i]){
+            try{ restored.push(await driveDownloadAsObjectUrl(item.driveImageIds[i])); continue; }
+            catch(e){}
+          }
+          // carouselAssetPaths 방식 (향후 대비)
+          restored.push('');
+        }
+        item.images=restored;
+        if(srcInvalid) item.src=restored.find(s=>s)||'';
+      }
+
+      // src가 있거나 assetPath라도 있으면 포함
+      if(item.src||item.assetPath) loaded.push(item);
     }
+
     items=loaded;
     selectedId=null;
     await saveData();
     renderBoard();
     if(currentTab==='ai')refreshAiTab();
     updateGdriveStatus('Drive 불러오기 완료 ✓',true);
-    showToast('Drive 데이터 불러오기 완료','success');
+    showToast(`Drive 데이터 불러오기 완료 (${loaded.length}개)`,'success');
   }catch(e){
     console.error(e);
     updateGdriveStatus('불러오기 실패',false);
