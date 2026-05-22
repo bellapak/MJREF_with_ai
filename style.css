@@ -1,0 +1,6 @@
+:root { --bg: #000; --accent: #0a84ff; --card: #111; }
+body { background: var(--bg); color: #fff; font-family: sans-serif; padding: 20px; }
+#board { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; }
+.card { background: var(--card); border-radius: 12px; padding: 15px; border: 1px solid #222; }
+.ai-report { font-size: 0.85rem; color: #aaa; background: #050505; padding: 10px; border-left: 2px solid var(--accent); margin-top: 10px; }
+button { background: var(--accent); color: white; border: none; padding: 8px; border-radius: 6px; cursor: pointer; }
