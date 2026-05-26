@@ -6,8 +6,9 @@
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
 const PROVIDER_HINTS={anthropic:'발급: console.anthropic.com/settings/keys',openai:'발급: platform.openai.com/api-keys',google:'발급: aistudio.google.com/app/apikey'};
-const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file';
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
 const DRIVE_ROOT_FOLDER_NAME='refboard-assets';
+const DRIVE_ASSET_FOLDER_NAME='assets';
 const DRIVE_DATA_FILE_NAME='refboard-data.json';
 const LS_KEY='refboard_v31_state';
 const GDRIVE_CLIENT_ID_KEY='refboard_google_client_id';
@@ -27,6 +28,7 @@ let modalSelectedCats=[];
 let gdriveToken=null;
 let tokenClient=null;
 let gdriveFolderId=null;
+let gdriveAssetFolderId=null;
 let gdriveDataFileId=null;
 let aiSelectedIds=new Set();
 let currentAiGroupFilter='';
@@ -115,6 +117,45 @@ async function findDriveFile(name,mimeType,parentId){
   const url='https://www.googleapis.com/drive/v3/files?fields=files(id,name,mimeType)&q='+encodeURIComponent(q.join(' and '));
   const json=await (await driveFetch(url)).json(); return json.files?.[0]||null;
 }
+async function listDriveFiles(parentId){
+  const q=[`'${parentId}' in parents`,`trashed=false`].join(' and ');
+  let files=[]; let pageToken='';
+  do{
+    const url='https://www.googleapis.com/drive/v3/files?fields='+encodeURIComponent('nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime)')+'&pageSize=1000&q='+encodeURIComponent(q)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
+    const json=await (await driveFetch(url)).json();
+    files=files.concat(json.files||[]); pageToken=json.nextPageToken||'';
+  }while(pageToken);
+  return files;
+}
+function isDriveMediaFile(f){ return /^image\//.test(f.mimeType||'') || /^video\//.test(f.mimeType||''); }
+function cleanFileBase(name=''){ return String(name).replace(/\.[^.]+$/,'').trim().toLowerCase(); }
+function fileToDriveItem(f){
+  return normalizeItem({id:'d'+f.id,title:f.name,type:(f.mimeType||'').startsWith('video/')?'video':'image',driveFileId:f.id,mimeType:f.mimeType,fileName:f.name,ts:f.modifiedTime?Date.parse(f.modifiedTime):Date.now(),sourceType:'drive_assets'});
+}
+async function syncItemsWithDriveAssets(){
+  const assetFolderId=await ensureAssetFolder();
+  const files=(await listDriveFiles(assetFolderId)).filter(isDriveMediaFile);
+  const byId=new Map(files.map(f=>[f.id,f]));
+  const byName=new Map(files.map(f=>[cleanFileBase(f.name),f]));
+  let linked=0, added=0;
+  for(const it of items){
+    if(it.driveFileId && byId.has(it.driveFileId)){ const f=byId.get(it.driveFileId); it.mimeType=it.mimeType||f.mimeType; it.fileName=it.fileName||f.name; continue; }
+    const candidates=[it.fileName,it.title,(it.src||'').split('/').pop(),it.sourceUrl?.split('/').pop()].filter(Boolean).map(cleanFileBase);
+    const hit=candidates.map(k=>byName.get(k)).find(Boolean);
+    if(hit){ it.driveFileId=hit.id; it.mimeType=it.mimeType||hit.mimeType; it.fileName=it.fileName||hit.name; if(!it.type || it.type==='link') it.type=hit.mimeType.startsWith('video/')?'video':'image'; linked++; }
+    if(Array.isArray(it.carousel)){
+      for(const slide of it.carousel){
+        if(slide.driveFileId) continue;
+        const sc=[slide.fileName,slide.title,(slide.src||'').split('/').pop()].filter(Boolean).map(cleanFileBase);
+        const sh=sc.map(k=>byName.get(k)).find(Boolean);
+        if(sh){ slide.driveFileId=sh.id; slide.mimeType=slide.mimeType||sh.mimeType; slide.fileName=slide.fileName||sh.name; linked++; }
+      }
+    }
+  }
+  const existing=new Set(items.map(i=>i.driveFileId).filter(Boolean));
+  files.forEach(f=>{ if(!existing.has(f.id)){ items.push(fileToDriveItem(f)); existing.add(f.id); added++; } });
+  return {linked,added,total:files.length};
+}
 async function ensureDriveFolder(){
   if(gdriveFolderId) return gdriveFolderId;
   let folder=await findDriveFile(DRIVE_ROOT_FOLDER_NAME,'application/vnd.google-apps.folder');
@@ -126,8 +167,19 @@ async function ensureDriveFolder(){
   const data=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId); if(data) gdriveDataFileId=data.id;
   return gdriveFolderId;
 }
-async function uploadBlobToDrive(blob,name,mimeType){
-  const folderId=await ensureDriveFolder();
+async function ensureAssetFolder(){
+  if(gdriveAssetFolderId) return gdriveAssetFolderId;
+  const rootId=await ensureDriveFolder();
+  let folder=await findDriveFile(DRIVE_ASSET_FOLDER_NAME,'application/vnd.google-apps.folder',rootId);
+  if(!folder){
+    const meta={name:DRIVE_ASSET_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder',parents:[rootId]};
+    folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)})).json();
+  }
+  gdriveAssetFolderId=folder.id;
+  return gdriveAssetFolderId;
+}
+async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
+  const folderId=parentId || await ensureAssetFolder();
   const metadata={name,parents:[folderId],mimeType};
   const boundary='-------refboard'+Date.now();
   const delimiter=`\r\n--${boundary}\r\n`; const close=`\r\n--${boundary}--`;
@@ -141,7 +193,7 @@ async function uploadDataFile(){
   if(gdriveDataFileId){
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
-    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json'); gdriveDataFileId=f.id;
+    const rootId=await ensureDriveFolder(); const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',rootId); gdriveDataFileId=f.id;
   }
 }
 async function saveToDrive(silent=false){
@@ -165,15 +217,20 @@ async function saveToDrive(silent=false){
 }
 async function loadFromDrive(){
   try{
-    await ensureDriveToken(); await ensureDriveFolder();
+    await ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
     const f=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
-    if(!f){ showToast('Drive에 저장된 데이터가 없습니다','error'); return; }
-    gdriveDataFileId=f.id;
-    const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
-    groups=Array.isArray(data.groups)?data.groups:[];
-    categories=Array.isArray(data.categories)?data.categories:[];
-    items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
-    saveLocal(); renderAll(); showToast('Drive 불러오기 완료','success');
+    if(f){
+      gdriveDataFileId=f.id;
+      const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
+      groups=Array.isArray(data.groups)?data.groups:[];
+      categories=Array.isArray(data.categories)?data.categories:[];
+      items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
+    }else{
+      groups=[]; categories=[]; items=[];
+    }
+    const sync=await syncItemsWithDriveAssets();
+    saveLocal(); renderAll();
+    showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
   }catch(e){ console.error(e); showToast(e.message||'Drive 불러오기 실패','error'); }
 }
 async function getDriveObjectURL(fileId,mimeType=''){
