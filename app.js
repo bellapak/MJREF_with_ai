@@ -69,7 +69,7 @@ function normalizeItem(raw={}){
   };
 }
 function syncState(){ state={groups,categories,items}; }
-function saveLocal(){ const persistState=(typeof makePersistableState==='function')?makePersistableState():(syncState(),state); localStorage.setItem(LS_KEY, JSON.stringify(persistState)); updateAutosave('saved'); }
+function saveLocal(){ syncState(); localStorage.setItem(LS_KEY, JSON.stringify(state)); updateAutosave('saved'); }
 function loadLocal(){
   try{
     const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
@@ -195,30 +195,12 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
   const boundary='-------refboard'+Date.now();
   const delimiter=`\r\n--${boundary}\r\n`; const close=`\r\n--${boundary}--`;
   const body=new Blob([delimiter,'Content-Type: application/json; charset=UTF-8\r\n\r\n',JSON.stringify(metadata),delimiter,`Content-Type: ${mimeType||'application/octet-stream'}\r\n\r\n`,blob,close],{type:`multipart/related; boundary=${boundary}`});
-  const json=await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,thumbnailLink,webContentLink',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body})).json();
+  const json=await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body})).json();
   return json;
 }
-function makePersistableState(){
-  const cleanItem=(it)=>{
-    const o={...it};
-    delete o._file;
-    if(typeof o.src==='string' && o.src.startsWith('blob:')) o.src='';
-    if(Array.isArray(o.carousel)){
-      o.carousel=o.carousel.map(sl=>{
-        const s={...sl};
-        delete s._file;
-        if(typeof s.src==='string' && s.src.startsWith('blob:')) s.src='';
-        return s;
-      });
-    }
-    return o;
-  };
-  return {groups,categories,items:items.map(cleanItem)};
-}
 async function uploadDataFile(){
-  const folderId=await ensureDriveFolder();
-  const persistState=makePersistableState();
-  const blob=new Blob([JSON.stringify(persistState,null,2)],{type:'application/json'});
+  const folderId=await ensureDriveFolder(); syncState();
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
   if(gdriveDataFileId){
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
@@ -231,13 +213,13 @@ async function saveToDrive(silent=false){
     await Promise.all(items.map(async it=>{
       if(it.driveFileId || !it._file) return;
       const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
-      it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; it.thumbnailLink=f.thumbnailLink||it.thumbnailLink||''; delete it._file;
-      // 붙여넣기 직후 화면에서는 blob URL을 유지해야 즉시 보입니다. Drive JSON 저장 시에는 replacer에서 제외합니다.
+      it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; delete it._file;
+      if(it.src?.startsWith('blob:')) it.src='';
     }));
     for(const it of items){
       if(Array.isArray(it.carousel)){
         for(const slide of it.carousel){
-          if(!slide.driveFileId && slide._file){ const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png'); slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||''; delete slide._file; // 현재 화면 표시용 blob URL 유지 }
+          if(!slide.driveFileId && slide._file){ const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png'); slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; delete slide._file; if(slide.src?.startsWith('blob:')) slide.src=''; }
         }
       }
     }
@@ -280,35 +262,20 @@ function bindDriveMedia(el,it,placeholder=''){
 }
 function bindCardMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
-
-  // 1) 붙여넣기/업로드 직후의 blob URL은 가장 먼저 사용합니다.
-  // Drive 저장 직후에도 이 값을 유지해야 화면에서 이미지가 바로 보입니다.
-  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
-
-  // 2) 일반 외부 URL
-  if(it.src && !it.driveFileId){ el.src=it.src; return; }
-
-  // 3) Drive 파일: 썸네일이 있으면 우선 사용
+  // 보드 카드에서는 대용량 원본을 받지 않고 Drive 썸네일만 먼저 사용합니다.
+  // 이게 렌더링 속도를 가장 크게 개선합니다.
   if(it.driveFileId){
     if(it.thumbnailLink){ el.src=it.thumbnailLink; return; }
-
-    // 4) private Drive 파일은 drive.google.com/thumbnail 이미지 태그가 권한 때문에 실패할 수 있습니다.
-    // 그래서 인증 fetch로 blob URL을 만들어 카드에 넣습니다.
     if((it.mimeType||'').startsWith('image/')){
-      if(placeholder) el.src=placeholder;
-      getDriveObjectURL(it.driveFileId,it.mimeType)
-        .then(u=>{ if(u) el.src=u; })
-        .catch(e=>{ console.error('Drive card image failed', e); if(placeholder) el.src=placeholder; });
+      el.src=`https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
       return;
     }
-
     if((it.mimeType||'').startsWith('video/')){
       el.removeAttribute('src');
       el.style.background='var(--s3)';
       return;
     }
   }
-
   if(it.src) el.src=it.src; else if(placeholder) el.src=placeholder;
 }
 
@@ -685,3 +652,298 @@ function installReliablePasteListener(){
   },true);
 }
 window.addEventListener('DOMContentLoaded',()=>{ installReliablePasteListener(); renderCategories(); renderBoard(); });
+
+/* =====================================================
+   v36 PATCH — paste preview, persistent Google session, strict group/subcategory
+   ===================================================== */
+const GDRIVE_TOKEN_STORE_KEY='refboard_google_access_token_v36';
+const GDRIVE_TOKEN_EXP_KEY='refboard_google_access_token_exp_v36';
+const GDRIVE_HAS_AUTH_KEY='refboard_google_has_auth_v36';
+
+function nowMs(){ return Date.now(); }
+function cacheDriveToken(token,expiresIn){
+  if(!token) return;
+  const exp=nowMs()+Math.max(0,Number(expiresIn||3600)-90)*1000;
+  gdriveToken=token;
+  try{
+    sessionStorage.setItem(GDRIVE_TOKEN_STORE_KEY,token);
+    sessionStorage.setItem(GDRIVE_TOKEN_EXP_KEY,String(exp));
+    localStorage.setItem(GDRIVE_HAS_AUTH_KEY,'1');
+  }catch(e){ console.warn(e); }
+  updateDriveUi();
+}
+function restoreCachedDriveToken(){
+  try{
+    const token=sessionStorage.getItem(GDRIVE_TOKEN_STORE_KEY)||'';
+    const exp=Number(sessionStorage.getItem(GDRIVE_TOKEN_EXP_KEY)||0);
+    if(token && exp>nowMs()+30000){ gdriveToken=token; updateDriveUi(); return token; }
+  }catch(e){ console.warn(e); }
+  return '';
+}
+async function requestDriveToken(promptMode=''){
+  const {clientId}=getGapiConfig();
+  if(!clientId){ openGdriveSetup(); throw new Error('Google OAuth Client ID가 없습니다.'); }
+  if(!window.google?.accounts?.oauth2){ throw new Error('Google Identity Services 스크립트를 불러오지 못했습니다.'); }
+  return await new Promise((resolve,reject)=>{
+    tokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:clientId,
+      scope:DRIVE_SCOPE,
+      callback:(res)=>{
+        if(res.error){ reject(res); return; }
+        cacheDriveToken(res.access_token,res.expires_in);
+        resolve(res.access_token);
+      }
+    });
+    tokenClient.requestAccessToken({prompt:promptMode});
+  });
+}
+async function ensureDriveToken(forceConsent=false){
+  if(!forceConsent){
+    if(gdriveToken) return gdriveToken;
+    const cached=restoreCachedDriveToken();
+    if(cached) return cached;
+  }
+  const hasAuth=localStorage.getItem(GDRIVE_HAS_AUTH_KEY)==='1';
+  try{ return await requestDriveToken(forceConsent?'consent':(hasAuth?'':'consent')); }
+  catch(e){
+    if(!forceConsent && hasAuth){ return await requestDriveToken('consent'); }
+    throw e;
+  }
+}
+async function gdriveSignIn(){
+  try{ await ensureDriveToken(true); await ensureDriveFolder(); await ensureAssetFolder(); showToast('Google Drive 연결 완료','success'); }
+  catch(e){ console.error(e); showToast(e.message||'Drive 연결 실패','error'); }
+}
+function updateDriveUi(){
+  const connected=!!(gdriveToken||restoreCachedDriveToken());
+  const status=$('gdrive-status'); if(status) status.textContent=connected?'Drive 연결됨':'Drive 미연결';
+  const banner=$('gdrive-setup-banner'); if(banner) banner.style.display=getGapiConfig().clientId?'none':'inline-block';
+  const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
+}
+
+function fileToItem(file, extra={}){
+  const isVideo=(file.type||'').startsWith('video/');
+  const previewSrc=URL.createObjectURL(file);
+  return {
+    id: uid(),
+    title: extra.title||file.name||'붙여넣기 이미지',
+    type: isVideo?'video':'image',
+    src: previewSrc,
+    previewSrc,
+    driveFileId:'',
+    mimeType:file.type||'image/png',
+    fileName:file.name||`paste_${Date.now()}.png`,
+    catIds:Array.isArray(extra.catIds)?extra.catIds:[],
+    platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
+    caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
+    carousel:Array.isArray(extra.carousel)?extra.carousel:[],
+    ts:extra.ts||Date.now(),
+    _file:file
+  };
+}
+function bindCardMedia(el,it,placeholder=''){
+  if(!it){ if(placeholder) el.src=placeholder; return; }
+  if(it.previewSrc){ el.src=it.previewSrc; return; }
+  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
+  if(it.src && !it.driveFileId){ el.src=it.src; return; }
+  if(it.driveFileId){
+    if(it.thumbnailLink){ el.src=it.thumbnailLink; return; }
+    if((it.mimeType||'').startsWith('image/')){
+      if(placeholder) el.src=placeholder;
+      getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error('Drive card image failed',e); if(placeholder) el.src=placeholder; });
+      return;
+    }
+    if((it.mimeType||'').startsWith('video/')){ el.removeAttribute('src'); el.style.background='var(--s3)'; return; }
+  }
+  if(placeholder) el.src=placeholder;
+}
+function bindDriveMedia(el,it,placeholder=''){
+  if(!it){ if(placeholder) el.src=placeholder; return; }
+  if(it.previewSrc){ el.src=it.previewSrc; return; }
+  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
+  if(it.driveFileId){ getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error('Drive media load failed',e); if(placeholder) el.src=placeholder; }); }
+  else if(it.src) el.src=it.src;
+  else if(placeholder) el.src=placeholder;
+}
+function makePersistableState(){
+  const cleanItem=(it)=>{
+    const o={...it};
+    delete o._file; delete o.previewSrc;
+    if(typeof o.src==='string' && o.src.startsWith('blob:')) o.src='';
+    if(Array.isArray(o.carousel)) o.carousel=o.carousel.map(sl=>{ const s={...sl}; delete s._file; delete s.previewSrc; if(typeof s.src==='string' && s.src.startsWith('blob:')) s.src=''; return s; });
+    return o;
+  };
+  normalizeCategoryGroups();
+  return {groups,categories,items:items.map(cleanItem)};
+}
+async function saveToDrive(silent=false){
+  try{
+    await ensureDriveToken(); await ensureDriveFolder();
+    await Promise.all(items.map(async it=>{
+      if(!it.driveFileId && it._file){
+        const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
+        it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; it.thumbnailLink=f.thumbnailLink||it.thumbnailLink||'';
+        delete it._file;
+      }
+      if(Array.isArray(it.carousel)){
+        for(const slide of it.carousel){
+          if(!slide.driveFileId && slide._file){
+            const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png');
+            slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||'';
+            delete slide._file;
+          }
+        }
+      }
+    }));
+    await uploadDataFile(); saveLocal(); if(!silent) showToast('Drive 저장 완료','success'); renderBoard(); renderDetail();
+  }catch(e){ console.error(e); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
+}
+async function saveData(){
+  updateAutosave('saving');
+  saveLocal();
+  // 화면 먼저 보여주고 Drive 업로드는 뒤에서 처리합니다.
+  if(gdriveToken||restoreCachedDriveToken()) saveToDrive(true);
+}
+
+function normalizeCategoryGroups(){
+  const groupIds=new Set(groups.map(g=>g.id));
+  categories=categories.map(c=>{
+    const next={...c};
+    let gid=next.groupId || next.parentId || next.group || '';
+    if(gid && !groupIds.has(gid)){
+      const byName=groups.find(g=>g.name===gid || g.title===gid);
+      gid=byName?byName.id:'';
+    }
+    next.groupId=gid||'';
+    delete next.parentId; delete next.group;
+    return next;
+  });
+}
+function getCategoryGroupId(c){ return c?.groupId || c?.parentId || c?.group || ''; }
+function setCategoryGroupId(c, groupId){ c.groupId=groupId||''; delete c.parentId; delete c.group; }
+function groupByCategories(){
+  normalizeCategoryGroups();
+  const map=new Map(); groups.forEach(g=>map.set(g.id,[]));
+  const ungrouped=[];
+  categories.forEach(c=>{ const gid=getCategoryGroupId(c); if(gid && map.has(gid)) map.get(gid).push(c); else ungrouped.push(c); });
+  return {map,ungrouped};
+}
+function categoryRowNode(c){
+  const row=document.createElement('div'); row.className='cat-row';
+  const cnt=items.filter(i=>i.catIds?.includes(c.id)).length;
+  row.innerHTML=`<button class="cat-filter-btn ${currentCatFilter===c.id?'active':''}"><span class="dot" style="background:${c.color}"></span><span class="cat-name">${esc(c.name)}</span><span class="cnt">${cnt}</span></button><button class="cat-edit-btn" title="소분류 삭제">×</button>`;
+  row.querySelector('.cat-filter-btn').onclick=()=>{ currentCatFilter=c.id; currentFilter='all'; document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.remove('active')); document.querySelector('.sb-btn[data-filter="all"]')?.classList.add('active'); renderCategories(); renderBoard(); };
+  row.querySelector('.cat-edit-btn').onclick=(e)=>{ e.stopPropagation(); if(confirm('소분류를 삭제할까요?')){ categories=categories.filter(x=>x.id!==c.id); items.forEach(i=>i.catIds=(i.catIds||[]).filter(id=>id!==c.id)); saveData(); renderAll(); } };
+  return row;
+}
+function renderCategories(){
+  const list=$('cat-list'); if(!list) return; list.innerHTML='';
+  const {map,ungrouped}=groupByCategories();
+  groups.forEach(g=>{
+    const cats=map.get(g.id)||[];
+    const open=!collapsedGroups.has(g.id);
+    const block=document.createElement('div'); block.className='group-block';
+    const cnt=cats.reduce((sum,c)=>sum+items.filter(i=>i.catIds?.includes(c.id)).length,0);
+    block.innerHTML=`<div class="group-header" data-gid="${g.id}"><span class="group-toggle ${open?'open':''}">▶</span><span class="group-title-line" style="background:${g.color||'var(--accent)'}"></span><span class="group-name" style="color:${g.color||'var(--t1)'}">${esc(g.name)}</span><span class="group-cnt">${cnt}</span><button class="group-edit-btn" title="대분류 삭제">×</button></div>`;
+    const children=document.createElement('div'); children.className='group-children'+(open?'':' collapsed');
+    if(cats.length) cats.forEach(c=>children.appendChild(categoryRowNode(c))); else children.innerHTML='<div style="font-size:11px;color:var(--t4);padding:6px 10px;">소분류 없음</div>';
+    block.appendChild(children);
+    block.querySelector('.group-header').onclick=(e)=>{ if(e.target.classList.contains('group-edit-btn')) return; collapsedGroups.has(g.id)?collapsedGroups.delete(g.id):collapsedGroups.add(g.id); persistCollapsedGroups(); renderCategories(); };
+    block.querySelector('.group-edit-btn').onclick=(e)=>{ e.stopPropagation(); if(confirm('대분류를 삭제할까요? 소분류는 그룹 없음으로 이동합니다.')){ groups=groups.filter(x=>x.id!==g.id); categories.forEach(c=>{ if(getCategoryGroupId(c)===g.id) setCategoryGroupId(c,''); }); saveData(); renderAll(); } };
+    list.appendChild(block);
+  });
+  if(ungrouped.length){ const sec=document.createElement('div'); sec.className='ungrouped-section'; sec.innerHTML='<div class="sb-section" style="padding-top:8px;">그룹 없음</div>'; ungrouped.forEach(c=>sec.appendChild(categoryRowNode(c))); list.appendChild(sec); }
+  renderNewCatGroupOptions(); renderModalCats(); renderDetailCatOptions(); renderAiFilters();
+}
+function renderNewCatGroupOptions(){
+  const sel=$('new-cat-group'); if(!sel) return;
+  const cur=sel.value||'';
+  sel.innerHTML='<option value="">그룹 없음</option>'+groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+}
+function showNewCatForm(){ $('new-cat-form').style.display='block'; renderNewCatGroupOptions(); renderColorSwatches('new-cat-colors'); }
+function saveNewCat(){
+  const name=$('new-cat-name').value.trim(); if(!name)return;
+  const groupId=$('new-cat-group')?.value||'';
+  categories.push({id:uid('c'),name,color:CAT_COLORS[categories.length%CAT_COLORS.length],groupId});
+  $('new-cat-name').value=''; if($('new-cat-group')) $('new-cat-group').value='';
+  hideNewCatForm(); normalizeCategoryGroups(); saveData(); renderAll();
+}
+function saveNewGroup(){
+  const name=$('new-group-name').value.trim(); if(!name)return;
+  const g={id:uid('g'),name,color:CAT_COLORS[groups.length%CAT_COLORS.length]};
+  groups.push(g); collapsedGroups.delete(g.id); persistCollapsedGroups();
+  $('new-group-name').value=''; hideNewGroupForm(); saveData(); renderAll();
+}
+
+async function addPastedFiles(files){
+  const arr=[...files].filter(f=>/^image\//.test(f.type||'') || /^video\//.test(f.type||''));
+  if(!arr.length) return 0;
+  arr.forEach((f,i)=>{
+    const safeName=f.name&&f.name!=='image.png'?f.name:`paste_${Date.now()}_${i}.${((f.type||'image/png').split('/')[1]||'png').replace('jpeg','jpg')}`;
+    const file=f.name?f:new File([f],safeName,{type:f.type||'image/png'});
+    items.unshift(fileToItem(file,{title:safeName,sourceType:'paste'}));
+  });
+  saveLocal(); renderAll();
+  saveData();
+  return arr.length;
+}
+function handlePaste(cd){
+  if(!cd) return;
+  let added=0;
+  const files=[...(cd.files||[])].filter(f=>/^image\//.test(f.type||'') || /^video\//.test(f.type||''));
+  if(files.length){ addPastedFiles(files).then(n=>{ if(n) showToast(`${n}개 붙여넣기 완료`,'success'); }); return; }
+  const stringJobs=[];
+  for(const item of cd.items||[]){
+    if(item.kind==='file'){
+      const f=item.getAsFile();
+      if(f && (/^image\//.test(f.type||'') || /^video\//.test(f.type||''))){ items.unshift(fileToItem(f,{sourceType:'paste'})); added++; }
+    }else if(item.kind==='string' && item.type==='text/plain'){
+      stringJobs.push(new Promise(resolve=>item.getAsString(s=>{ const url=(s||'').trim(); if(/^https?:\/\//.test(url)){ items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()})); added++; } resolve(); })));
+    }
+  }
+  Promise.all(stringJobs).then(()=>{ if(added){ saveLocal(); renderAll(); saveData(); showToast(`${added}개 붙여넣기 완료`,'success'); } });
+}
+async function readClipboardNow(e){
+  e?.stopPropagation?.();
+  try{
+    if(navigator.clipboard?.read){
+      const entries=await navigator.clipboard.read();
+      let added=0;
+      for(const entry of entries){
+        for(const type of entry.types){
+          if(type.startsWith('image/')){
+            const blob=await entry.getType(type);
+            const ext=(type.split('/')[1]||'png').replace('jpeg','jpg');
+            const file=new File([blob],`paste_${Date.now()}_${added}.${ext}`,{type});
+            items.unshift(fileToItem(file,{sourceType:'paste'})); added++;
+          }else if(type==='text/plain'){
+            const text=await (await entry.getType(type)).text(); const url=text.trim();
+            if(/^https?:\/\//.test(url)){ items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()})); added++; }
+          }
+        }
+      }
+      if(added){ saveLocal(); renderAll(); saveData(); showToast(`${added}개 붙여넣기 완료`,'success'); return; }
+    }
+    const text=await navigator.clipboard.readText();
+    if(/^https?:\/\//.test(text.trim())){ await addUrlItem(text.trim()); showToast('URL 붙여넣기 완료','success'); return; }
+    showToast('클립보드에서 이미지나 URL을 찾지 못했어요','error');
+  }catch(err){ console.error(err); showToast('브라우저 권한상 Ctrl+V를 눌러 붙여넣어주세요','error'); }
+}
+function installReliablePasteListener(){
+  if(window.__refboardPasteInstalled) return;
+  window.__refboardPasteInstalled=true;
+  document.addEventListener('paste',(e)=>{
+    const tag=document.activeElement?.tagName?.toLowerCase();
+    const editable=document.activeElement?.isContentEditable;
+    if(tag==='input'||tag==='textarea'||editable) return;
+    e.preventDefault(); handlePaste(e.clipboardData);
+  },true);
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  restoreCachedDriveToken();
+  normalizeCategoryGroups();
+  installReliablePasteListener();
+  renderCategories(); renderBoard(); updateDriveUi();
+});
