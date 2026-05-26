@@ -384,16 +384,24 @@ async function driveDownloadText(fileId){
   return resp.text();
 }
 
-// Drive 파일 → Blob URL
-async function driveDownloadAsObjectUrl(fileId){
-  requireGdriveToken();
-  const resp=await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-    {headers:{Authorization:'Bearer '+gdriveToken}}
-  );
-  if(!resp.ok)throw new Error('에셋 다운로드 실패');
-  const blob=await resp.blob();
-  return URL.createObjectURL(blob);
+// 추천 방식: GAPI 라이브러리 사용
+async function driveDownloadAsObjectUrl(fileId) {
+  try {
+    // GAPI 클라이언트를 사용하여 직접 다운로드
+    const response = await gapi.client.drive.files.get({
+      fileId: fileId,
+      alt: 'media'
+    });
+
+    // response.body는 바이너리 데이터입니다.
+    // 파일 타입(MimeType)에 따라 Blob 생성 시 타입을 지정해주세요.
+    const blob = new Blob([response.body], { type: 'image/png' }); 
+    return URL.createObjectURL(blob);
+    
+  } catch (err) {
+    console.error("드라이브 에셋 로드 중 오류 발생:", err);
+    throw new Error('에셋 다운로드 실패');
+  }
 }
 
 // refboard-assets 폴더 ID 확보 (없으면 생성)
