@@ -69,7 +69,7 @@ function normalizeItem(raw={}){
   };
 }
 function syncState(){ state={groups,categories,items}; }
-function saveLocal(){ syncState(); localStorage.setItem(LS_KEY, JSON.stringify(state)); updateAutosave('saved'); }
+function saveLocal(){ const persistState=(typeof makePersistableState==='function')?makePersistableState():(syncState(),state); localStorage.setItem(LS_KEY, JSON.stringify(persistState)); updateAutosave('saved'); }
 function loadLocal(){
   try{
     const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
@@ -195,12 +195,30 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
   const boundary='-------refboard'+Date.now();
   const delimiter=`\r\n--${boundary}\r\n`; const close=`\r\n--${boundary}--`;
   const body=new Blob([delimiter,'Content-Type: application/json; charset=UTF-8\r\n\r\n',JSON.stringify(metadata),delimiter,`Content-Type: ${mimeType||'application/octet-stream'}\r\n\r\n`,blob,close],{type:`multipart/related; boundary=${boundary}`});
-  const json=await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body})).json();
+  const json=await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,thumbnailLink,webContentLink',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body})).json();
   return json;
 }
+function makePersistableState(){
+  const cleanItem=(it)=>{
+    const o={...it};
+    delete o._file;
+    if(typeof o.src==='string' && o.src.startsWith('blob:')) o.src='';
+    if(Array.isArray(o.carousel)){
+      o.carousel=o.carousel.map(sl=>{
+        const s={...sl};
+        delete s._file;
+        if(typeof s.src==='string' && s.src.startsWith('blob:')) s.src='';
+        return s;
+      });
+    }
+    return o;
+  };
+  return {groups,categories,items:items.map(cleanItem)};
+}
 async function uploadDataFile(){
-  const folderId=await ensureDriveFolder(); syncState();
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const folderId=await ensureDriveFolder();
+  const persistState=makePersistableState();
+  const blob=new Blob([JSON.stringify(persistState,null,2)],{type:'application/json'});
   if(gdriveDataFileId){
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
@@ -213,13 +231,13 @@ async function saveToDrive(silent=false){
     await Promise.all(items.map(async it=>{
       if(it.driveFileId || !it._file) return;
       const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
-      it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; delete it._file;
-      if(it.src?.startsWith('blob:')) it.src='';
+      it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; it.thumbnailLink=f.thumbnailLink||it.thumbnailLink||''; delete it._file;
+      // 붙여넣기 직후 화면에서는 blob URL을 유지해야 즉시 보입니다. Drive JSON 저장 시에는 replacer에서 제외합니다.
     }));
     for(const it of items){
       if(Array.isArray(it.carousel)){
         for(const slide of it.carousel){
-          if(!slide.driveFileId && slide._file){ const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png'); slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; delete slide._file; if(slide.src?.startsWith('blob:')) slide.src=''; }
+          if(!slide.driveFileId && slide._file){ const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png'); slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||''; delete slide._file; // 현재 화면 표시용 blob URL 유지 }
         }
       }
     }
@@ -262,20 +280,35 @@ function bindDriveMedia(el,it,placeholder=''){
 }
 function bindCardMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
-  // 보드 카드에서는 대용량 원본을 받지 않고 Drive 썸네일만 먼저 사용합니다.
-  // 이게 렌더링 속도를 가장 크게 개선합니다.
+
+  // 1) 붙여넣기/업로드 직후의 blob URL은 가장 먼저 사용합니다.
+  // Drive 저장 직후에도 이 값을 유지해야 화면에서 이미지가 바로 보입니다.
+  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
+
+  // 2) 일반 외부 URL
+  if(it.src && !it.driveFileId){ el.src=it.src; return; }
+
+  // 3) Drive 파일: 썸네일이 있으면 우선 사용
   if(it.driveFileId){
     if(it.thumbnailLink){ el.src=it.thumbnailLink; return; }
+
+    // 4) private Drive 파일은 drive.google.com/thumbnail 이미지 태그가 권한 때문에 실패할 수 있습니다.
+    // 그래서 인증 fetch로 blob URL을 만들어 카드에 넣습니다.
     if((it.mimeType||'').startsWith('image/')){
-      el.src=`https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
+      if(placeholder) el.src=placeholder;
+      getDriveObjectURL(it.driveFileId,it.mimeType)
+        .then(u=>{ if(u) el.src=u; })
+        .catch(e=>{ console.error('Drive card image failed', e); if(placeholder) el.src=placeholder; });
       return;
     }
+
     if((it.mimeType||'').startsWith('video/')){
       el.removeAttribute('src');
       el.style.background='var(--s3)';
       return;
     }
   }
+
   if(it.src) el.src=it.src; else if(placeholder) el.src=placeholder;
 }
 
@@ -424,3 +457,231 @@ function runBatchAnalysis(){ const res=$('ai-batch-result'); if(!res)return; res
 
 // init
 window.addEventListener('DOMContentLoaded',()=>{ loadLocal(); renderAll(); onProviderChange(); updateDriveUi(); document.addEventListener('paste',e=>{ if(document.activeElement?.tagName==='INPUT'||document.activeElement?.tagName==='TEXTAREA') return; handlePaste(e.clipboardData); }); });
+
+// =====================================================
+// v34 patch — grouped category dropdown + reliable paste UI
+// =====================================================
+const collapsedGroups = new Set(JSON.parse(localStorage.getItem('refboard_collapsed_groups')||'[]'));
+function persistCollapsedGroups(){ localStorage.setItem('refboard_collapsed_groups', JSON.stringify([...collapsedGroups])); }
+function getCategoryGroupId(c){ return c.groupId || c.parentId || c.group || ''; }
+function setCategoryGroupId(c, groupId){ c.groupId = groupId || ''; delete c.parentId; delete c.group; }
+function groupByCategories(){
+  const map = new Map();
+  groups.forEach(g=>map.set(g.id, []));
+  const ungrouped=[];
+  categories.forEach(c=>{
+    const gid=getCategoryGroupId(c);
+    if(gid && map.has(gid)) map.get(gid).push(c); else ungrouped.push(c);
+  });
+  return {map, ungrouped};
+}
+function categoryRowNode(c){
+  const row=document.createElement('div'); row.className='cat-row';
+  const cnt=items.filter(i=>i.catIds?.includes(c.id)).length;
+  row.innerHTML=`<button class="cat-filter-btn ${currentCatFilter===c.id?'active':''}"><span class="dot" style="background:${c.color}"></span><span class="cat-name">${esc(c.name)}</span><span class="cnt">${cnt}</span></button><button class="cat-edit-btn" title="카테고리 삭제">×</button>`;
+  row.querySelector('.cat-filter-btn').onclick=()=>{
+    currentCatFilter=c.id; currentFilter='all';
+    document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.remove('active'));
+    document.querySelector('.sb-btn[data-filter="all"]')?.classList.add('active');
+    renderCategories(); renderBoard();
+  };
+  row.querySelector('.cat-edit-btn').onclick=(e)=>{
+    e.stopPropagation();
+    if(confirm('소분류를 삭제할까요?')){
+      categories=categories.filter(x=>x.id!==c.id);
+      items.forEach(i=>i.catIds=(i.catIds||[]).filter(id=>id!==c.id));
+      saveData(); renderAll();
+    }
+  };
+  return row;
+}
+function renderCategories(){
+  const list=$('cat-list'); if(!list) return; list.innerHTML='';
+  const {map, ungrouped}=groupByCategories();
+
+  groups.forEach(g=>{
+    const cats=map.get(g.id)||[];
+    const open=!collapsedGroups.has(g.id);
+    const block=document.createElement('div'); block.className='group-block';
+    const cnt=cats.reduce((sum,c)=>sum+items.filter(i=>i.catIds?.includes(c.id)).length,0);
+    block.innerHTML=`<div class="group-header" data-gid="${g.id}">
+      <span class="group-toggle ${open?'open':''}">▶</span>
+      <span class="group-title-line" style="background:${g.color||'var(--accent)'}"></span>
+      <span class="group-name" style="color:${g.color||'var(--t1)'}">${esc(g.name)}</span>
+      <span class="group-cnt">${cnt}</span>
+      <button class="group-edit-btn" title="대분류 삭제">×</button>
+    </div>`;
+    const children=document.createElement('div'); children.className='group-children'+(open?'':' collapsed');
+    if(cats.length){ cats.forEach(c=>children.appendChild(categoryRowNode(c))); }
+    else { children.innerHTML='<div style="font-size:11px;color:var(--t4);padding:6px 10px;">소분류 없음</div>'; }
+    block.appendChild(children);
+    block.querySelector('.group-header').onclick=(e)=>{
+      if(e.target.classList.contains('group-edit-btn')) return;
+      collapsedGroups.has(g.id)?collapsedGroups.delete(g.id):collapsedGroups.add(g.id);
+      persistCollapsedGroups(); renderCategories();
+    };
+    block.querySelector('.group-edit-btn').onclick=(e)=>{
+      e.stopPropagation();
+      if(confirm('대분류를 삭제할까요? 소분류는 그룹 없음으로 이동합니다.')){
+        groups=groups.filter(x=>x.id!==g.id);
+        categories.forEach(c=>{ if(getCategoryGroupId(c)===g.id) setCategoryGroupId(c,''); });
+        saveData(); renderAll();
+      }
+    };
+    list.appendChild(block);
+  });
+
+  if(ungrouped.length){
+    const sec=document.createElement('div'); sec.className='ungrouped-section';
+    sec.innerHTML='<div class="sb-section" style="padding-top:8px;">그룹 없음</div>';
+    ungrouped.forEach(c=>sec.appendChild(categoryRowNode(c)));
+    list.appendChild(sec);
+  }
+  renderNewCatGroupOptions(); renderModalCats(); renderDetailCatOptions(); renderAiFilters();
+}
+function renderNewCatGroupOptions(){
+  const sel=$('new-cat-group'); if(!sel) return;
+  const cur=sel.value||'';
+  sel.innerHTML='<option value="">그룹 없음</option>'+groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  sel.value=cur;
+}
+function showNewCatForm(){ $('new-cat-form').style.display='block'; renderNewCatGroupOptions(); renderColorSwatches('new-cat-colors'); }
+function saveNewCat(){
+  const name=$('new-cat-name').value.trim(); if(!name)return;
+  const groupId=$('new-cat-group')?.value||'';
+  categories.push({id:uid('c'),name,color:CAT_COLORS[categories.length%CAT_COLORS.length],groupId});
+  $('new-cat-name').value=''; if($('new-cat-group')) $('new-cat-group').value='';
+  hideNewCatForm(); saveData(); renderAll();
+}
+function showNewGroupForm(){ $('new-group-form').style.display='block'; renderColorSwatches('new-group-colors'); }
+function saveNewGroup(){
+  const name=$('new-group-name').value.trim(); if(!name)return;
+  const g={id:uid('g'),name,color:CAT_COLORS[groups.length%CAT_COLORS.length]};
+  groups.push(g); collapsedGroups.delete(g.id); persistCollapsedGroups();
+  $('new-group-name').value=''; hideNewGroupForm(); saveData(); renderAll();
+}
+function renderAiFilters(){
+  const gf=$('ai-group-filter'), cf=$('ai-cat-filter');
+  if(gf) gf.innerHTML='<option value="">전체 대분류</option>'+groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  if(cf){
+    let cats=categories;
+    if(currentAiGroupFilter) cats=cats.filter(c=>getCategoryGroupId(c)===currentAiGroupFilter);
+    cf.innerHTML='<option value="">전체 소분류</option>'+cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  }
+}
+function onAiGroupFilterChange(){ currentAiGroupFilter=$('ai-group-filter').value; currentAiCatFilter=''; if($('ai-cat-filter')) $('ai-cat-filter').value=''; renderAiFilters(); renderAiTargets(); }
+function renderAiTargets(){
+  const el=$('ai-target-selector'); if(!el)return;
+  let arr=[...items];
+  if(currentAiGroupFilter){
+    const catIds=categories.filter(c=>getCategoryGroupId(c)===currentAiGroupFilter).map(c=>c.id);
+    arr=arr.filter(i=>(i.catIds||[]).some(id=>catIds.includes(id)));
+  }
+  if(currentAiCatFilter) arr=arr.filter(i=>i.catIds?.includes(currentAiCatFilter));
+  $('board-img-cnt')&&($('board-img-cnt').textContent=items.filter(i=>i.type==='image'||i.type==='carousel').length);
+  $('board-vid-cnt')&&($('board-vid-cnt').textContent=items.filter(i=>i.type==='video').length);
+  $('ai-filter-meta')&&($('ai-filter-meta').textContent=`${arr.length}개 레퍼런스 표시 중`);
+  el.innerHTML='';
+  if(!arr.length){el.innerHTML='<div class="ai-target-empty">표시할 레퍼런스가 없습니다</div>';return;}
+  arr.forEach(it=>{
+    const c=document.createElement('div'); c.className='ai-target-card '+(aiSelectedIds.has(it.id)?'selected':'');
+    c.onclick=()=>{aiSelectedIds.has(it.id)?aiSelectedIds.delete(it.id):aiSelectedIds.add(it.id); renderAiTargets();};
+    const img=document.createElement(it.type==='video'?'video':'img'); if(it.type==='video') img.muted=true;
+    bindCardMedia(img,it.type==='carousel'?(it.carousel?.[0]||{}):it);
+    c.appendChild(img); c.insertAdjacentHTML('beforeend',`<div class="atc-title">${esc(it.title)}</div>`); el.appendChild(c);
+  });
+}
+
+function pasteBarNode(){
+  const div=document.createElement('div'); div.id='paste-bar'; div.className='paste-bar';
+  div.innerHTML=`<div><strong>붙여넣기 / 빠른 추가</strong><span>Ctrl+V로 이미지·URL 추가, 드래그 앤 드롭 또는 클릭 업로드</span></div><div class="paste-actions"><button type="button" id="paste-read-btn">클립보드 읽기</button><button type="button" id="paste-upload-btn">파일 선택</button></div>`;
+  div.ondragover=onDragOver; div.ondragleave=onDragLeave; div.ondrop=onDrop;
+  div.onclick=(e)=>{ if(e.target.id==='paste-upload-btn') $('file-input')?.click(); };
+  setTimeout(()=>{
+    $('paste-read-btn')?.addEventListener('click', readClipboardNow);
+    $('paste-upload-btn')?.addEventListener('click', ()=>$('file-input')?.click());
+  },0);
+  return div;
+}
+function renderBoard(){
+  const board=$('board'); if(!board) return;
+  const job=++boardRenderJob;
+  board.className=currentView+'-view';
+  board.innerHTML='';
+  const arr=filteredItems();
+  $('count-label') && ($('count-label').textContent=`${arr.length}개`);
+  renderCounts();
+  board.appendChild(pasteBarNode());
+  if(items.length===0){ board.appendChild(dropZoneNode()); return; }
+  if(arr.length===0){ board.insertAdjacentHTML('beforeend','<div id="empty-state">검색 결과가 없어요<br><span style="font-size:11px;color:var(--t4)">다른 검색어나 필터를 사용해보세요</span></div>'); return; }
+  const chunkSize=currentView==='list'?80:40;
+  let idx=0;
+  function paintChunk(){
+    if(job!==boardRenderJob) return;
+    const frag=document.createDocumentFragment();
+    const end=Math.min(idx+chunkSize, arr.length);
+    for(; idx<end; idx++) frag.appendChild(cardNode(arr[idx]));
+    board.appendChild(frag);
+    if(idx<arr.length) requestAnimationFrame(paintChunk);
+  }
+  paintChunk();
+}
+async function readClipboardNow(e){
+  e?.stopPropagation?.();
+  try{
+    if(navigator.clipboard?.read){
+      const entries=await navigator.clipboard.read();
+      let added=0;
+      for(const entry of entries){
+        for(const type of entry.types){
+          if(type.startsWith('image/')){
+            const blob=await entry.getType(type);
+            const ext=(type.split('/')[1]||'png').replace('jpeg','jpg');
+            const file=new File([blob],`paste_${Date.now()}_${added}.${ext}`,{type});
+            items.push(fileToItem(file)); added++;
+          }else if(type==='text/plain'){
+            const text=await (await entry.getType(type)).text();
+            const url=text.trim();
+            if(/^https?:\/\//.test(url)){ items.push(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),ts:Date.now()})); added++; }
+          }
+        }
+      }
+      if(added){ await saveData(); renderAll(); showToast(`${added}개 붙여넣기 완료`,'success'); return; }
+    }
+    const text=await navigator.clipboard.readText();
+    if(/^https?:\/\//.test(text.trim())){ await addUrlItem(text.trim()); showToast('URL 붙여넣기 완료','success'); return; }
+    showToast('클립보드에서 이미지나 URL을 찾지 못했어요','error');
+  }catch(err){ console.error(err); showToast('브라우저 권한상 Ctrl+V를 눌러 붙여넣어주세요','error'); }
+}
+function handlePaste(cd){
+  if(!cd) return;
+  let fileAdded=0, urlAdded=0;
+  const stringJobs=[];
+  for(const item of cd.items||[]){
+    if(item.kind==='file'){
+      const f=item.getAsFile();
+      if(f && (f.type.startsWith('image/') || f.type.startsWith('video/'))){ items.push(fileToItem(f)); fileAdded++; }
+    }else if(item.kind==='string' && item.type==='text/plain'){
+      stringJobs.push(new Promise(resolve=>item.getAsString(s=>{
+        const url=(s||'').trim();
+        if(/^https?:\/\//.test(url)){ items.push(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),ts:Date.now()})); urlAdded++; }
+        resolve();
+      })));
+    }
+  }
+  Promise.all(stringJobs).then(()=>{
+    if(fileAdded||urlAdded){ saveData(); renderAll(); showToast(`${fileAdded+urlAdded}개 붙여넣기 완료`,'success'); }
+  });
+}
+function installReliablePasteListener(){
+  if(window.__refboardPasteInstalled) return;
+  window.__refboardPasteInstalled=true;
+  document.addEventListener('paste',(e)=>{
+    const tag=document.activeElement?.tagName?.toLowerCase();
+    const editable=document.activeElement?.isContentEditable;
+    if(tag==='input'||tag==='textarea'||editable) return;
+    e.preventDefault();
+    handlePaste(e.clipboardData);
+  },true);
+}
+window.addEventListener('DOMContentLoaded',()=>{ installReliablePasteListener(); renderCategories(); renderBoard(); });
