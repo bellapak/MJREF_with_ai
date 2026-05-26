@@ -6,7 +6,7 @@
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
 const PROVIDER_HINTS={anthropic:'발급: console.anthropic.com/settings/keys',openai:'발급: platform.openai.com/api-keys',google:'발급: aistudio.google.com/app/apikey'};
-const DRIVE_SCOPE='https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly';
+const DRIVE_SCOPE='https://www.googleapis.com/auth/drive';
 const DRIVE_ROOT_FOLDER_NAME='refboard-assets';
 const DRIVE_ASSET_FOLDER_NAME='assets';
 const DRIVE_DATA_FILE_NAME='refboard-data.json';
@@ -114,27 +114,36 @@ async function gdriveSignIn(){ try{ await ensureDriveToken(); await ensureDriveF
 async function driveFetch(url,opts={}){ const token=await ensureDriveToken(); const res=await fetch(url,{...opts,headers:{Authorization:`Bearer ${token}`,...(opts.headers||{})}}); if(!res.ok){ const txt=await res.text().catch(()=>''); throw new Error(`Drive 요청 실패 ${res.status}: ${txt}`); } return res; }
 async function findDriveFile(name,mimeType,parentId){
   const q=[`name='${name.replace(/'/g,"\\'")}'`,`trashed=false`]; if(mimeType) q.push(`mimeType='${mimeType}'`); if(parentId) q.push(`'${parentId}' in parents`);
-  const url='https://www.googleapis.com/drive/v3/files?fields=files(id,name,mimeType)&q='+encodeURIComponent(q.join(' and '));
+  const url='https://www.googleapis.com/drive/v3/files?spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name,mimeType,parents)&q='+encodeURIComponent(q.join(' and '));
   const json=await (await driveFetch(url)).json(); return json.files?.[0]||null;
 }
 async function listDriveFiles(parentId){
   const q=[`'${parentId}' in parents`,`trashed=false`].join(' and ');
   let files=[]; let pageToken='';
   do{
-    const url='https://www.googleapis.com/drive/v3/files?fields='+encodeURIComponent('nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime)')+'&pageSize=1000&q='+encodeURIComponent(q)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
+    const url='https://www.googleapis.com/drive/v3/files?spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true&fields='+encodeURIComponent('nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,parents,thumbnailLink,webContentLink)')+'&pageSize=1000&q='+encodeURIComponent(q)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
     const json=await (await driveFetch(url)).json();
     files=files.concat(json.files||[]); pageToken=json.nextPageToken||'';
   }while(pageToken);
   return files;
 }
+async function listDriveFilesRecursive(parentId){
+  const direct=await listDriveFiles(parentId);
+  let all=[...direct];
+  const folders=direct.filter(f=>f.mimeType==='application/vnd.google-apps.folder');
+  for(const folder of folders){
+    all=all.concat(await listDriveFilesRecursive(folder.id));
+  }
+  return all;
+}
 function isDriveMediaFile(f){ return /^image\//.test(f.mimeType||'') || /^video\//.test(f.mimeType||''); }
 function cleanFileBase(name=''){ return String(name).replace(/\.[^.]+$/,'').trim().toLowerCase(); }
 function fileToDriveItem(f){
-  return normalizeItem({id:'d'+f.id,title:f.name,type:(f.mimeType||'').startsWith('video/')?'video':'image',driveFileId:f.id,mimeType:f.mimeType,fileName:f.name,ts:f.modifiedTime?Date.parse(f.modifiedTime):Date.now(),sourceType:'drive_assets'});
+  return normalizeItem({id:'d'+f.id,title:f.name,type:(f.mimeType||'').startsWith('video/')?'video':'image',driveFileId:f.id,mimeType:f.mimeType,fileName:f.name,thumbnailLink:f.thumbnailLink||'',ts:f.modifiedTime?Date.parse(f.modifiedTime):Date.now(),sourceType:'drive_assets'});
 }
 async function syncItemsWithDriveAssets(){
   const assetFolderId=await ensureAssetFolder();
-  const files=(await listDriveFiles(assetFolderId)).filter(isDriveMediaFile);
+  const files=(await listDriveFilesRecursive(assetFolderId)).filter(isDriveMediaFile);
   const byId=new Map(files.map(f=>[f.id,f]));
   const byName=new Map(files.map(f=>[cleanFileBase(f.name),f]));
   let linked=0, added=0;
@@ -231,18 +240,21 @@ async function loadFromDrive(){
     const sync=await syncItemsWithDriveAssets();
     saveLocal(); renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
-  }catch(e){ console.error(e); showToast(e.message||'Drive 불러오기 실패','error'); }
+  }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
 }
 async function getDriveObjectURL(fileId,mimeType=''){
   if(!fileId) return '';
   if(objectUrlCache.has(fileId)) return objectUrlCache.get(fileId);
-  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`);
   const blob=await res.blob();
   const url=URL.createObjectURL(blob.type?blob:new Blob([blob],{type:mimeType||'application/octet-stream'}));
   objectUrlCache.set(fileId,url); return url;
 }
 function bindDriveMedia(el,it,placeholder=''){
-  if(it.driveFileId){ getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error(e); el.alt='Drive 미디어 로드 실패'; }); }
+  if(it.driveFileId){
+    if((it.type==='image'||(it.mimeType||'').startsWith('image/')) && it.thumbnailLink){ el.src=it.thumbnailLink; }
+    getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error('Drive media load failed', it, e); el.alt='Drive 미디어 로드 실패'; if(placeholder) el.src=placeholder; });
+  }
   else if(it.src) el.src=it.src; else if(placeholder) el.src=placeholder;
 }
 
