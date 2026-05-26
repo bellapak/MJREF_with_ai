@@ -289,9 +289,9 @@
     <!-- 캐러셀 아이템 폼 -->
     <div id="modal-carousel-section" style="display:none;">
       <div class="form-row">
-        <label class="form-label">이미지 여러 장 업로드</label>
-        <button class="tb-btn" style="width:100%" onclick="document.getElementById('carousel-file-input').click()">이미지 선택 (여러 장)</button>
-        <input type="file" id="carousel-file-input" accept="image/*" multiple style="display:none" onchange="handleCarouselFiles(event)">
+        <label class="form-label">이미지/영상 여러 개 업로드</label>
+        <button class="tb-btn" style="width:100%" onclick="document.getElementById('carousel-file-input').click()">이미지/영상 선택 (여러 개)</button>
+        <input type="file" id="carousel-file-input" accept="image/*,video/*" multiple style="display:none" onchange="handleCarouselFiles(event)">
       </div>
       <!-- 캐러셀 미리보기 -->
       <div id="carousel-preview-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;max-height:200px;overflow-y:auto;"></div>
@@ -302,6 +302,11 @@
         <label class="form-label">본문 / 캡션 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(AI 분석 핵심 입력값)</span></label>
         <textarea class="form-input soft" id="add-caption" rows="4" placeholder="원문 캡션, 광고 카피, 해시태그를 그대로 넣어주세요."></textarea>
         <div class="field-helper">Make/Snippit에서 description, text, caption 값이 들어오면 이 칸으로 매핑합니다.</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">게시물 본문 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(긴 본문/원문 기록)</span></label>
+        <textarea class="form-input soft" id="add-body" rows="5" placeholder="본문이 있는 게시물이라면 원문 전체를 작성해 주세요. 줄바꿈과 해시태그도 그대로 저장됩니다."></textarea>
+        <div class="field-helper">캡션 요약과 별도로 긴 본문, 후기 문구, 광고 본문을 보관하는 칸입니다.</div>
       </div>
       <div class="form-grid-2">
         <div class="form-row">

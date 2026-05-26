@@ -998,3 +998,101 @@ body.ai-panel-open #ai-side-handle{
 .paste-bar{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff;border:1px dashed rgba(0,100,255,.25);border-radius:18px;padding:12px 14px;margin-bottom:2px;box-shadow:0 4px 14px rgba(15,23,42,.04)}
 .paste-bar strong{display:block;font-size:13px;color:#111827;margin-bottom:3px}.paste-bar span{display:block;font-size:11px;color:#7b8190}.paste-actions{display:flex;gap:6px}.paste-actions button{border:1px solid rgba(0,100,255,.18);background:rgba(0,100,255,.07);color:var(--accent);border-radius:999px;padding:7px 11px;font-size:11px;font-weight:700;cursor:pointer}.group-block{margin-bottom:8px}.group-header{background:rgba(0,0,0,.025);border-radius:12px;padding:8px 8px}.group-children{margin:4px 0 0 15px;padding-left:10px;border-left:2px solid rgba(0,100,255,.12)}.group-children.collapsed{display:none}.group-toggle.open{transform:rotate(90deg)}.cat-row{margin:3px 0}.cat-filter-btn{width:100%;}
 .ref-card img.card-media[src^="blob:"], .ref-card video.card-media[src^="blob:"]{display:block!important;opacity:1!important;visibility:visible!important;background:#eef1f5!important;}
+
+
+/* =====================================================
+   v8 Carousel + Body field patch
+   ===================================================== */
+.carousel-preview-item{
+  position:relative;width:76px;height:76px;border-radius:12px;overflow:hidden;
+  border:1px solid var(--glass-border);background:var(--s3);flex:0 0 auto;
+}
+.carousel-preview-item img,.carousel-preview-item video{width:100%;height:100%;object-fit:cover;display:block;}
+.carousel-preview-index{position:absolute;left:5px;top:5px;background:rgba(0,0,0,.55);color:#fff;font-size:9px;font-weight:700;border-radius:999px;padding:2px 6px;}
+.carousel-preview-remove{position:absolute;right:5px;top:5px;width:18px;height:18px;border:0;border-radius:999px;background:rgba(255,69,58,.9);color:#fff;font-size:12px;line-height:18px;cursor:pointer;}
+.carousel-stack{position:relative;width:100%;aspect-ratio:1/1;background:var(--s3);overflow:hidden;}
+.carousel-stack .card-media{position:absolute;inset:0;width:100%;height:100%;}
+.carousel-count-badge{position:absolute;right:8px;bottom:8px;z-index:3;background:rgba(0,0,0,.62);color:#fff;font-size:10px;font-weight:700;padding:4px 8px;border-radius:999px;backdrop-filter:blur(10px);}
+.carousel-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;}
+.carousel-detail-slide{position:relative;background:var(--s3);border-radius:10px;overflow:hidden;border:1px solid var(--glass-border);}
+.carousel-detail-slide img,.carousel-detail-slide video{width:100%;height:160px;object-fit:cover;display:block;border-radius:0!important;max-height:none!important;}
+.carousel-detail-slide-num{position:absolute;left:7px;top:7px;background:rgba(0,0,0,.58);color:#fff;font-size:10px;font-weight:700;border-radius:999px;padding:3px 7px;}
+.detail-body-text{white-space:pre-wrap;line-height:1.7;}
+@media(max-width:768px){.carousel-detail-grid{grid-template-columns:1fr;}.carousel-detail-slide img,.carousel-detail-slide video{height:auto;max-height:260px;object-fit:contain;}}
+
+/* =====================================================
+   v9 COMPACT BOARD + SAFE THUMBNAIL FALLBACK
+   - 카드 크기 축소로 한 화면 노출 수 증가
+   - 깨진 Drive 썸네일 대신 로딩/플레이스홀더 표시
+   ===================================================== */
+#board.grid-view{
+  grid-template-columns:repeat(auto-fill,minmax(128px,1fr))!important;
+  gap:9px!important;
+}
+.ref-card{
+  border-radius:12px!important;
+}
+.card-media,.card-video-thumb,.carousel-stack{
+  aspect-ratio:1/1!important;
+  min-height:0!important;
+  background:#eef1f5!important;
+}
+.card-info{
+  padding:7px 8px!important;
+}
+.card-title{
+  font-size:10px!important;
+  margin-bottom:4px!important;
+}
+.card-cat-tag{
+  font-size:8px!important;
+  padding:1px 5px!important;
+}
+.card-date{
+  font-size:8px!important;
+}
+.card-type-badge,.carousel-count-badge{
+  font-size:8px!important;
+  padding:2px 6px!important;
+}
+.card-meta-chip{
+  font-size:8px!important;
+  padding:1px 5px!important;
+}
+.card-delete{
+  width:20px!important;
+  height:20px!important;
+  font-size:10px!important;
+}
+.media-placeholder{
+  width:100%;
+  aspect-ratio:1/1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:linear-gradient(135deg,#f0f2f5,#e6e9ef);
+  color:#9aa2af;
+  font-size:10px;
+  text-align:center;
+  line-height:1.4;
+}
+.media-placeholder::before{
+  content:'PREVIEW';
+  letter-spacing:.08em;
+  font-weight:700;
+}
+.media-placeholder.video::before{content:'VIDEO';}
+.media-placeholder.loading::before{content:'LOADING';}
+.card-media.media-loading{
+  background:linear-gradient(135deg,#f0f2f5,#e6e9ef)!important;
+}
+.card-media.media-broken{
+  object-fit:contain!important;
+  background:linear-gradient(135deg,#f4f5f7,#eceff4)!important;
+}
+@media(max-width:768px){
+  #board.grid-view{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))!important;gap:8px!important;}
+}
+@media(max-width:480px){
+  #board.grid-view{grid-template-columns:repeat(auto-fill,minmax(96px,1fr))!important;gap:7px!important;}
+}
