@@ -1273,3 +1273,207 @@ function cardNode(it){
   const badge=document.createElement('div'); badge.className='card-type-badge'; badge.textContent=it.type==='video'?'VIDEO':it.type==='carousel'?'CAROUSEL':it.type==='link'?'LINK':'IMAGE'; card.appendChild(badge);
   return card;
 }
+
+// =====================================================
+// v10 OVERRIDE — editable detail + Drive delete sync
+// =====================================================
+const DELETED_DRIVE_IDS_KEY = 'refboard_deleted_drive_file_ids_v10';
+function getDeletedDriveIds(){
+  try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));}
+  catch(e){return new Set();}
+}
+function saveDeletedDriveIds(set){
+  localStorage.setItem(DELETED_DRIVE_IDS_KEY, JSON.stringify([...set].filter(Boolean)));
+}
+function rememberDeletedDriveIds(ids=[]){
+  const set=getDeletedDriveIds();
+  ids.filter(Boolean).forEach(id=>set.add(id));
+  saveDeletedDriveIds(set);
+}
+function collectItemDriveFileIds(it){
+  const ids=[];
+  if(it?.driveFileId) ids.push(it.driveFileId);
+  if(Array.isArray(it?.carousel)) it.carousel.forEach(s=>{ if(s?.driveFileId) ids.push(s.driveFileId); });
+  return [...new Set(ids.filter(Boolean))];
+}
+
+// 기존 로컬 저장에 삭제 이력도 함께 보존
+function saveLocal(){
+  syncState();
+  state.deletedDriveFileIds=[...getDeletedDriveIds()];
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+  updateAutosave('saved');
+}
+function loadLocal(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
+    groups=Array.isArray(raw.groups)?raw.groups:[];
+    categories=Array.isArray(raw.categories)?raw.categories:[];
+    items=Array.isArray(raw.items)?raw.items.map(normalizeItem):[];
+    if(Array.isArray(raw.deletedDriveFileIds)) rememberDeletedDriveIds(raw.deletedDriveFileIds);
+    normalizeCategoryGroups?.();
+    state={groups,categories,items,deletedDriveFileIds:[...getDeletedDriveIds()]};
+  }catch(e){ console.warn(e); }
+}
+
+async function uploadDataFile(){
+  const folderId=await ensureDriveFolder(); syncState();
+  state.deletedDriveFileIds=[...getDeletedDriveIds()];
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  if(gdriveDataFileId){
+    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
+  }else{
+    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId); gdriveDataFileId=f.id;
+  }
+}
+
+async function deleteDriveFile(fileId){
+  if(!fileId) return false;
+  try{
+    await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`,{method:'DELETE'});
+    objectUrlCache?.delete?.(fileId);
+    return true;
+  }catch(e){
+    console.warn('Drive file delete failed, will keep deleted marker:', fileId, e);
+    return false;
+  }
+}
+
+async function syncItemsWithDriveAssets(){
+  const assetFolderId=await ensureAssetFolder();
+  const deleted=getDeletedDriveIds();
+  const files=(await listDriveFilesRecursive(assetFolderId)).filter(isDriveMediaFile).filter(f=>!deleted.has(f.id));
+  const byId=new Map(files.map(f=>[f.id,f]));
+  const byName=new Map(files.map(f=>[cleanFileBase(f.name),f]));
+  let linked=0, added=0;
+  for(const it of items){
+    if(it.driveFileId && deleted.has(it.driveFileId)) continue;
+    if(it.driveFileId && byId.has(it.driveFileId)){
+      const f=byId.get(it.driveFileId);
+      it.mimeType=it.mimeType||f.mimeType; it.fileName=it.fileName||f.name; it.thumbnailLink=it.thumbnailLink||f.thumbnailLink||'';
+      continue;
+    }
+    const candidates=[it.fileName,it.title,(it.src||'').split('/').pop(),it.sourceUrl?.split('/').pop()].filter(Boolean).map(cleanFileBase);
+    const hit=candidates.map(k=>byName.get(k)).find(Boolean);
+    if(hit){
+      it.driveFileId=hit.id; it.mimeType=it.mimeType||hit.mimeType; it.fileName=it.fileName||hit.name; it.thumbnailLink=it.thumbnailLink||hit.thumbnailLink||'';
+      if(!it.type || it.type==='link') it.type=hit.mimeType.startsWith('video/')?'video':'image';
+      linked++;
+    }
+    if(Array.isArray(it.carousel)){
+      for(const slide of it.carousel){
+        if(slide.driveFileId && deleted.has(slide.driveFileId)) continue;
+        if(slide.driveFileId) continue;
+        const sc=[slide.fileName,slide.title,(slide.src||'').split('/').pop()].filter(Boolean).map(cleanFileBase);
+        const sh=sc.map(k=>byName.get(k)).find(Boolean);
+        if(sh){ slide.driveFileId=sh.id; slide.mimeType=slide.mimeType||sh.mimeType; slide.fileName=slide.fileName||sh.name; slide.thumbnailLink=slide.thumbnailLink||sh.thumbnailLink||''; linked++; }
+      }
+    }
+  }
+  const existing=new Set(items.map(i=>i.driveFileId).filter(Boolean));
+  items.forEach(i=>Array.isArray(i.carousel)&&i.carousel.forEach(s=>{ if(s.driveFileId) existing.add(s.driveFileId); }));
+  files.forEach(f=>{ if(!existing.has(f.id)){ items.push(fileToDriveItem(f)); existing.add(f.id); added++; } });
+  return {linked,added,total:files.length};
+}
+
+async function loadFromDrive(){
+  try{
+    await ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
+    const f=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
+    if(f){
+      gdriveDataFileId=f.id;
+      const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
+      groups=Array.isArray(data.groups)?data.groups:[];
+      categories=Array.isArray(data.categories)?data.categories:[];
+      items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
+      if(Array.isArray(data.deletedDriveFileIds)) rememberDeletedDriveIds(data.deletedDriveFileIds);
+    }else{ groups=[]; categories=[]; items=[]; }
+    normalizeCategoryGroups?.();
+    const sync=await syncItemsWithDriveAssets();
+    saveLocal(); renderAll();
+    showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
+  }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
+}
+
+async function deleteItem(id){
+  const it=items.find(i=>i.id===id);
+  if(!it) return;
+  const ids=collectItemDriveFileIds(it);
+  const msg=ids.length ? '이 콘텐츠를 삭제할까요?\nDrive에 저장된 이미지/영상 파일도 함께 삭제됩니다.' : '이 콘텐츠를 삭제할까요?';
+  if(!confirm(msg)) return;
+  items=items.filter(i=>i.id!==id);
+  rememberDeletedDriveIds(ids);
+  if(selectedId===id) closeDetail();
+  saveLocal(); renderAll();
+  if(gdriveToken){
+    await Promise.all(ids.map(deleteDriveFile));
+    await uploadDataFile();
+    saveLocal();
+    showToast('삭제 완료 · Drive 동기화됨','success');
+  }else{
+    showToast('보드에서 삭제됨 · Drive 동기화는 Google 연결 후 저장 필요','success');
+  }
+}
+
+function renderDetail(){
+  const it=items.find(i=>i.id===selectedId); if(!it) return;
+  const m=$('detail-media'); if(!m) return; m.innerHTML='';
+  if(it.type==='carousel'){
+    const wrap=document.createElement('div'); wrap.className='detail-carousel-wrap';
+    (it.carousel||[]).forEach((s,idx)=>{
+      const box=document.createElement('div'); box.className='detail-carousel-item';
+      const label=document.createElement('div'); label.className='detail-carousel-label'; label.textContent=`${idx+1}/${it.carousel.length} · ${(s.mimeType||'').startsWith('video/')?'VIDEO':'IMAGE'}`; box.appendChild(label);
+      let media;
+      if((s.mimeType||'').startsWith('video/')){ media=document.createElement('video'); media.controls=true; bindDriveMedia(media,s); }
+      else { media=document.createElement('img'); bindDriveMedia(media,s); }
+      box.appendChild(media); wrap.appendChild(box);
+    });
+    m.appendChild(wrap);
+  }else if(it.type==='video'){
+    const el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it); m.appendChild(el);
+  }else if(it.type==='link'){
+    const el=document.createElement('a'); el.href=it.src||it.sourceUrl; el.target='_blank'; el.textContent='원본 링크 열기'; m.appendChild(el);
+  }else{
+    const el=document.createElement('img'); bindDriveMedia(el,it); m.appendChild(el);
+  }
+  renderDetailCatOptions();
+  const f=$('detail-fields'); if(!f) return;
+  f.innerHTML=`
+    <div class="detail-section-title">콘텐츠 수정</div>
+    <div class="detail-edit-grid">
+      <label class="detail-edit-label">제목<input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></label>
+      <label class="detail-edit-label">브랜드<input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></label>
+      <label class="detail-edit-label">플랫폼<input class="detail-input" id="detail-edit-platform" value="${esc(it.platform||'')}"></label>
+      <label class="detail-edit-label">원본 링크<input class="detail-input" id="detail-edit-source-url" value="${esc(it.sourceUrl||'')}"></label>
+    </div>
+    <label class="detail-edit-label">캡션 / 광고 카피 요약<textarea class="detail-input" id="detail-edit-caption" rows="5">${esc(it.caption||'')}</textarea></label>
+    <label class="detail-edit-label">본문 전체<textarea class="detail-input" id="detail-edit-body" rows="7">${esc(it.body||'')}</textarea></label>
+    <label class="detail-edit-label">훅 / CTA<textarea class="detail-input" id="detail-edit-hook" rows="3">${esc(it.hook||'')}</textarea></label>
+    <label class="detail-edit-label">메모<textarea class="detail-input" id="detail-edit-notes" rows="4">${esc(it.notes||'')}</textarea></label>
+    <div class="detail-actions" style="margin-top:8px;">
+      <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
+      <button class="detail-btn" onclick="renderDetail()">되돌리기</button>
+      <button class="detail-btn danger" onclick="deleteItem('${it.id}')">삭제</button>
+    </div>
+    <hr class="detail-divider">
+    <div class="detail-section-title">저장 정보</div>
+    <div class="detail-field"><div class="detail-key">TYPE</div><div class="detail-val">${esc(it.type||'-')}</div></div>
+    <div class="detail-field"><div class="detail-key">DRIVE FILE ID</div><div class="detail-val">${esc(it.driveFileId||'-')}</div></div>
+  `;
+}
+
+async function saveDetailEdits(){
+  const it=items.find(i=>i.id===selectedId); if(!it) return;
+  it.title=$('detail-edit-title')?.value.trim()||'제목없음';
+  it.brand=$('detail-edit-brand')?.value.trim()||'';
+  it.platform=$('detail-edit-platform')?.value.trim()||'';
+  it.sourceUrl=$('detail-edit-source-url')?.value.trim()||'';
+  it.caption=$('detail-edit-caption')?.value||'';
+  it.body=$('detail-edit-body')?.value||'';
+  it.hook=$('detail-edit-hook')?.value||'';
+  it.notes=$('detail-edit-notes')?.value||'';
+  it.updatedAt=Date.now();
+  await saveData();
+  renderAll(); renderDetail();
+  showToast('수정 저장 완료','success');
+}
