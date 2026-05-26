@@ -941,222 +941,6 @@ function installReliablePasteListener(){
   },true);
 }
 
-
-
-// =====================================================
-// v8 PATCH — Carousel content + post body field
-// =====================================================
-function normalizeItem(raw={}){
-  const type=raw.type || (Array.isArray(raw.carousel)&&raw.carousel.length?'carousel':(String(raw.mimeType||raw.fileType||'').startsWith('video/')?'video':'image'));
-  const normalizeSlide=(s={})=>({
-    id:s.id||uid('s'),
-    title:first(s.title,s.name,s.filename,s.fileName,''),
-    src:s.src||s.url||s.mediaUrl||'',
-    previewSrc:s.previewSrc||'',
-    driveFileId:s.driveFileId||s.fileId||'',
-    mimeType:s.mimeType||s.fileType||'',
-    thumbnailLink:s.thumbnailLink||s.thumbnail||'',
-    fileName:s.fileName||s.filename||s.name||'',
-    _file:s._file
-  });
-  return {
-    id: raw.id || uid(),
-    title: first(raw.title, raw.name, raw.filename, '제목없음'),
-    type,
-    src: raw.src || raw.url || raw.mediaUrl || '',
-    previewSrc: raw.previewSrc || '',
-    driveFileId: raw.driveFileId || raw.fileId || '',
-    mimeType: raw.mimeType || raw.fileType || '',
-    thumbnailLink: raw.thumbnailLink || raw.thumbnail || '',
-    fileName: raw.fileName || raw.filename || raw.name || '',
-    catIds: Array.isArray(raw.catIds)?raw.catIds:[],
-    platform: raw.platform || '',
-    brand: raw.brand || '',
-    sourceType: raw.sourceType || raw.source_type || '',
-    sourceUrl: raw.sourceUrl || raw.source_url || '',
-    caption: raw.caption || raw.description || raw.text || '',
-    body: raw.body || raw.postBody || raw.post_body || raw.fullText || raw.full_text || '',
-    hook: raw.hook || raw.headline || '',
-    cta: raw.cta || '',
-    visualNotes: raw.visualNotes || raw.visual_notes || '',
-    contentNotes: raw.contentNotes || raw.content_notes || '',
-    notes: raw.notes || '',
-    carousel: Array.isArray(raw.carousel)?raw.carousel.map(normalizeSlide):[],
-    ts: raw.ts || raw.createdAt || Date.now(),
-    _file: raw._file
-  };
-}
-function saveLocal(){
-  updateAutosave('saving');
-  state=typeof makePersistableState==='function'?makePersistableState():{groups,categories,items};
-  localStorage.setItem(LS_KEY, JSON.stringify(state));
-  updateAutosave('saved');
-}
-async function uploadDataFile(){
-  const folderId=await ensureDriveFolder();
-  const data=typeof makePersistableState==='function'?makePersistableState():{groups,categories,items};
-  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  if(gdriveDataFileId){
-    await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
-  }else{
-    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId);
-    gdriveDataFileId=f.id;
-  }
-}
-function fileToItem(file, extra={}){
-  const isVideo=(file.type||'').startsWith('video/');
-  const previewSrc=URL.createObjectURL(file);
-  return normalizeItem({
-    ...extra,
-    id: uid(),
-    title: extra.title||file.name||'붙여넣기 이미지',
-    type: isVideo?'video':'image',
-    src: previewSrc,
-    previewSrc,
-    driveFileId:'',
-    mimeType:file.type||'image/png',
-    fileName:file.name||`paste_${Date.now()}.png`,
-    ts:extra.ts||Date.now(),
-    _file:file
-  });
-}
-function openAddModal(){
-  pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[];
-  const clearIds=['modal-file-name','carousel-count-label','carousel-preview-list'];
-  clearIds.forEach(id=>{ if($(id)) $(id).innerHTML=''; });
-  ['add-title','add-url','add-brand','add-source-url','add-caption','add-body','add-hook','add-cta','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{ if($(id)) $(id).value=''; });
-  if($('modal-file')) $('modal-file').value='';
-  if($('carousel-file-input')) $('carousel-file-input').value='';
-  renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open');
-}
-function switchModalTab(mode){
-  modalMode=mode;
-  if($('modal-single-section')) $('modal-single-section').style.display=mode==='single'?'block':'none';
-  if($('modal-carousel-section')) $('modal-carousel-section').style.display=mode==='carousel'?'block':'none';
-  if($('modal-tab-single')){ $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; }
-  if($('modal-tab-carousel')){ $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
-}
-function renderCarouselPreview(){
-  const list=$('carousel-preview-list'); if(!list) return;
-  list.innerHTML='';
-  pendingCarouselFiles.forEach((f,idx)=>{
-    const wrap=document.createElement('div'); wrap.className='carousel-preview-item';
-    const media=document.createElement((f.type||'').startsWith('video/')?'video':'img');
-    media.src=URL.createObjectURL(f); if(media.tagName==='VIDEO'){ media.muted=true; media.playsInline=true; media.preload='metadata'; }
-    wrap.appendChild(media);
-    const num=document.createElement('span'); num.className='carousel-preview-index'; num.textContent=idx+1; wrap.appendChild(num);
-    const rm=document.createElement('button'); rm.type='button'; rm.className='carousel-preview-remove'; rm.textContent='×';
-    rm.onclick=(e)=>{ e.stopPropagation(); pendingCarouselFiles.splice(idx,1); renderCarouselPreview(); };
-    wrap.appendChild(rm); list.appendChild(wrap);
-  });
-  if($('carousel-count-label')) $('carousel-count-label').textContent=pendingCarouselFiles.length?`${pendingCarouselFiles.length}개 선택됨 · 한 콘텐츠 안에 묶여 저장됩니다.`:'';
-}
-function handleCarouselFiles(e){
-  const files=[...(e.target.files||[])].filter(f=>/^image\//.test(f.type||'') || /^video\//.test(f.type||''));
-  pendingCarouselFiles=[...pendingCarouselFiles,...files];
-  if(!$('add-title')?.value && files[0]) $('add-title').value=files[0].name.replace(/\.[^.]+$/,'')+' 외 '+Math.max(files.length-1,0)+'개';
-  renderCarouselPreview();
-}
-async function saveFromModal(){
-  const base={
-    title:$('add-title')?.value.trim()||'제목없음',
-    catIds:[...modalSelectedCats],
-    platform:$('add-platform')?.value||'',
-    brand:$('add-brand')?.value||'',
-    sourceType:$('add-source-type')?.value||'',
-    sourceUrl:$('add-source-url')?.value||'',
-    caption:$('add-caption')?.value||'',
-    body:$('add-body')?.value||'',
-    hook:$('add-hook')?.value||'',
-    cta:$('add-cta')?.value||'',
-    visualNotes:$('add-visual-notes')?.value||'',
-    contentNotes:$('add-content-notes')?.value||'',
-    notes:$('add-notes')?.value||'',
-    ts:Date.now()
-  };
-  const url=$('add-url')?.value.trim()||'';
-  if(modalMode==='carousel'){
-    if(!pendingCarouselFiles.length){ showToast('캐러셀에 넣을 이미지/영상을 선택해주세요','error'); return; }
-    const slides=pendingCarouselFiles.map((f,idx)=>({
-      id:uid('s'),
-      title:f.name||`slide_${idx+1}`,
-      src:URL.createObjectURL(f),
-      previewSrc:URL.createObjectURL(f),
-      mimeType:f.type||'application/octet-stream',
-      fileName:f.name||`carousel_${Date.now()}_${idx+1}`,
-      _file:f
-    }));
-    items.unshift(normalizeItem({...base,type:'carousel',carousel:slides}));
-  }else if(pendingFile){
-    items.unshift(fileToItem(pendingFile,base));
-  }else if(url){
-    items.unshift(normalizeItem({...base,src:url,type:guessType(url)}));
-  }else{
-    showToast('파일 또는 URL을 추가해주세요','error'); return;
-  }
-  saveLocal(); renderAll(); closeModal('add-modal'); saveData(); showToast('레퍼런스 추가 완료','success');
-}
-function cardNode(it){
-  const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
-  const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
-  let media;
-  if(it.type==='carousel'){
-    const firstSlide=it.carousel?.[0]||{};
-    const stack=document.createElement('div'); stack.className='carousel-stack';
-    const isVideo=(firstSlide.mimeType||'').startsWith('video/');
-    media=document.createElement(isVideo?'video':'img'); media.className='card-media'; if(isVideo){media.muted=true; media.playsInline=true; media.preload='metadata';}
-    bindCardMedia(media,firstSlide); stack.appendChild(media);
-    const count=document.createElement('div'); count.className='carousel-count-badge'; count.textContent=`${it.carousel?.length||0}개`; stack.appendChild(count);
-    card.appendChild(stack);
-  }else if(it.type==='video'){
-    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){ console.error(e); } } media.play().catch(()=>{}); }; media.onmouseleave=()=>{media.pause(); if(media.currentTime) media.currentTime=0;}; card.appendChild(media);
-  }else if(it.type==='link'){
-    media=document.createElement('div'); media.className='card-video-thumb'; media.innerHTML='<div style="font-size:34px;color:var(--t3)">↗</div>'; card.appendChild(media);
-  }else{
-    media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,it); media.alt=it.title; card.appendChild(media);
-  }
-  const info=document.createElement('div'); info.className='card-info';
-  const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
-  const bodyMark=(it.body||it.caption)?'<span class="card-meta-chip">본문 있음</span>':'';
-  info.innerHTML=`<div class="card-title">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-meta-line">${bodyMark}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
-  card.appendChild(info);
-  const badge=document.createElement('div'); badge.className='card-type-badge'; badge.textContent=it.type==='video'?'VIDEO':it.type==='carousel'?'CAROUSEL':it.type==='link'?'LINK':'IMAGE'; card.appendChild(badge);
-  return card;
-}
-function renderDetail(){
-  const it=items.find(i=>i.id===selectedId); if(!it)return;
-  const m=$('detail-media'); if(!m)return; m.innerHTML='';
-  let el;
-  if(it.type==='video'){
-    el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it);
-  }else if(it.type==='carousel'){
-    el=document.createElement('div'); el.className='carousel-detail-grid';
-    (it.carousel||[]).forEach((s,idx)=>{
-      const wrap=document.createElement('div'); wrap.className='carousel-detail-slide';
-      const media=document.createElement((s.mimeType||'').startsWith('video/')?'video':'img');
-      if(media.tagName==='VIDEO'){ media.controls=true; media.preload='metadata'; }
-      bindDriveMedia(media,s); wrap.appendChild(media);
-      const num=document.createElement('span'); num.className='carousel-detail-slide-num'; num.textContent=idx+1; wrap.appendChild(num);
-      el.appendChild(wrap);
-    });
-  }else if(it.type==='link'){
-    el=document.createElement('a'); el.href=it.src||it.sourceUrl; el.target='_blank'; el.textContent='원본 링크 열기';
-  }else{
-    el=document.createElement('img'); bindDriveMedia(el,it);
-  }
-  m.appendChild(el); renderDetailCatOptions();
-  const f=$('detail-fields'); if(!f)return;
-  f.innerHTML=`
-    <div class="detail-field"><div class="detail-key">TITLE</div><div class="detail-val">${esc(it.title)}</div></div>
-    <div class="detail-field"><div class="detail-key">TYPE</div><div class="detail-val">${esc(it.type)}${it.type==='carousel'?` · ${(it.carousel||[]).length}개`:''}</div></div>
-    <div class="detail-field"><div class="detail-key">BRAND</div><div class="detail-val">${esc(it.brand||'-')}</div></div>
-    <div class="detail-field"><div class="detail-key">CAPTION / 요약</div><div class="detail-val detail-body-text">${esc(it.caption||'-')}</div></div>
-    <div class="detail-field"><div class="detail-key">게시물 본문</div><div class="detail-val detail-body-text">${esc(it.body||'-')}</div></div>
-    <div class="detail-field"><div class="detail-key">HOOK</div><div class="detail-val">${esc(it.hook||'-')}</div></div>
-    <div class="detail-field"><div class="detail-key">CTA</div><div class="detail-val">${esc(it.cta||'-')}</div></div>
-    <div class="detail-field"><div class="detail-key">DRIVE FILE ID</div><div class="detail-val">${esc(it.driveFileId||'-')}</div></div>`;
-}
-
 window.addEventListener('DOMContentLoaded',()=>{
   restoreCachedDriveToken();
   normalizeCategoryGroups();
@@ -1164,215 +948,168 @@ window.addEventListener('DOMContentLoaded',()=>{
   renderCategories(); renderBoard(); updateDriveUi();
 });
 
-// =====================================================
-// v9 OVERRIDE — compact board + reliable Drive previews
-// =====================================================
-const cardPreviewObserver = (() => {
-  if (!('IntersectionObserver' in window)) return null;
-  return new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (!entry.isIntersecting) return;
-      const el = entry.target;
-      cardPreviewObserver.unobserve(el);
-      const fileId = el.dataset.driveFileId;
-      const mimeType = el.dataset.mimeType || '';
-      if (!fileId) return;
-      getDriveObjectURL(fileId, mimeType)
-        .then(url => {
-          if (!url) return;
-          el.classList.remove('media-loading','media-broken');
-          el.src = url;
-        })
-        .catch(err => {
-          console.error('Drive card preview failed:', err);
-          el.classList.remove('media-loading');
-          el.classList.add('media-broken');
-          el.removeAttribute('src');
-        });
-    });
-  }, { rootMargin: '800px 0px', threshold: 0.01 });
-})();
-
-function makeMediaPlaceholder(type='image'){
-  const div=document.createElement('div');
-  div.className='media-placeholder '+(type==='video'?'video':'loading');
-  return div;
-}
-
-function bindCardMedia(el,it,placeholder=''){
-  if(!it){ if(placeholder) el.src=placeholder; return; }
-
-  // 붙여넣기/로컬 업로드 직후 blob URL은 즉시 노출
-  if(it.src && String(it.src).startsWith('blob:')){
-    el.src=it.src;
-    return;
-  }
-
-  // 외부 URL은 그대로 노출, 실패 시 깨진 아이콘 대신 placeholder 스타일
-  if(it.src && !it.driveFileId){
-    el.src=it.src;
-    el.onerror=()=>{ el.classList.add('media-broken'); };
-    return;
-  }
-
-  // Drive 영상은 카드에서 원본을 바로 받지 않고 가벼운 placeholder만 표시
-  if(it.driveFileId && (it.mimeType||'').startsWith('video/')){
-    el.removeAttribute('src');
-    el.classList.add('media-loading');
-    el.dataset.driveFileId=it.driveFileId;
-    el.dataset.mimeType=it.mimeType||'';
-    return;
-  }
-
-  // Drive 이미지는 공개 thumbnailLink가 깨지는 경우가 많아,
-  // 보이는 카드부터 인증 fetch로 objectURL을 만들어 안정적으로 표시
-  if(it.driveFileId){
-    el.classList.add('media-loading');
-    el.dataset.driveFileId=it.driveFileId;
-    el.dataset.mimeType=it.mimeType||'image/*';
-    if(cardPreviewObserver){
-      cardPreviewObserver.observe(el);
-    }else{
-      getDriveObjectURL(it.driveFileId,it.mimeType).then(url=>{ if(url){ el.classList.remove('media-loading'); el.src=url; }}).catch(()=>el.classList.add('media-broken'));
-    }
-    return;
-  }
-
-  if(placeholder) el.src=placeholder;
-}
-
-function cardNode(it){
-  const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
-  const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
-  let media;
-  if(it.type==='carousel'){
-    const firstSlide=it.carousel?.[0]||{};
-    const stack=document.createElement('div'); stack.className='carousel-stack';
-    const isVideo=(firstSlide.mimeType||'').startsWith('video/');
-    if(isVideo){
-      media=makeMediaPlaceholder('video');
-    }else{
-      media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,firstSlide); media.alt=it.title;
-    }
-    stack.appendChild(media);
-    const count=document.createElement('div'); count.className='carousel-count-badge'; count.textContent=`${it.carousel?.length||0}개`; stack.appendChild(count);
-    card.appendChild(stack);
-  }else if(it.type==='video'){
-    media=makeMediaPlaceholder('video');
-    card.appendChild(media);
-  }else if(it.type==='link'){
-    media=document.createElement('div'); media.className='card-video-thumb'; media.innerHTML='<div style="font-size:26px;color:var(--t3)">↗</div>'; card.appendChild(media);
-  }else{
-    media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,it); media.alt=it.title; card.appendChild(media);
-  }
-  const info=document.createElement('div'); info.className='card-info';
-  const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).slice(0,2).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
-  const bodyMark=(it.body||it.caption)?'<span class="card-meta-chip">본문</span>':'';
-  info.innerHTML=`<div class="card-title">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-meta-line">${bodyMark}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
-  card.appendChild(info);
-  const badge=document.createElement('div'); badge.className='card-type-badge'; badge.textContent=it.type==='video'?'VIDEO':it.type==='carousel'?'CAROUSEL':it.type==='link'?'LINK':'IMAGE'; card.appendChild(badge);
-  return card;
-}
-
-// =====================================================
-// v10 OVERRIDE — editable detail + Drive delete sync
-// =====================================================
-const DELETED_DRIVE_IDS_KEY = 'refboard_deleted_drive_file_ids_v10';
+/* =====================================================
+   refboard v34 hotfix — carousel grouping + editable detail + Drive delete sync
+   - 캐러셀 슬라이드가 개별 이미지 카드로 다시 생성되는 문제 방지
+   - 상세 패널에서 캡션/본문 등 수정 저장
+   - 삭제 시 Drive 파일도 함께 휴지통 처리 + 삭제 이력 반영
+   ===================================================== */
+const DELETED_DRIVE_IDS_KEY='refboard_deleted_drive_ids_v34';
 function getDeletedDriveIds(){
   try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));}
   catch(e){return new Set();}
 }
-function saveDeletedDriveIds(set){
-  localStorage.setItem(DELETED_DRIVE_IDS_KEY, JSON.stringify([...set].filter(Boolean)));
-}
+function persistDeletedDriveIds(set){localStorage.setItem(DELETED_DRIVE_IDS_KEY,JSON.stringify([...set]));}
 function rememberDeletedDriveIds(ids=[]){
   const set=getDeletedDriveIds();
   ids.filter(Boolean).forEach(id=>set.add(id));
-  saveDeletedDriveIds(set);
+  persistDeletedDriveIds(set);
 }
-function collectItemDriveFileIds(it){
+function collectDriveIdsFromItem(it){
   const ids=[];
   if(it?.driveFileId) ids.push(it.driveFileId);
-  if(Array.isArray(it?.carousel)) it.carousel.forEach(s=>{ if(s?.driveFileId) ids.push(s.driveFileId); });
-  return [...new Set(ids.filter(Boolean))];
+  if(Array.isArray(it?.carousel)) it.carousel.forEach(s=>{if(s?.driveFileId) ids.push(s.driveFileId);});
+  return [...new Set(ids)];
 }
-
-// 기존 로컬 저장에 삭제 이력도 함께 보존
-function saveLocal(){
-  syncState();
-  state.deletedDriveFileIds=[...getDeletedDriveIds()];
-  localStorage.setItem(LS_KEY, JSON.stringify(state));
-  updateAutosave('saved');
-}
-function loadLocal(){
+async function deleteDriveFile(fileId){
+  if(!fileId) return;
   try{
-    const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
-    groups=Array.isArray(raw.groups)?raw.groups:[];
-    categories=Array.isArray(raw.categories)?raw.categories:[];
-    items=Array.isArray(raw.items)?raw.items.map(normalizeItem):[];
-    if(Array.isArray(raw.deletedDriveFileIds)) rememberDeletedDriveIds(raw.deletedDriveFileIds);
-    normalizeCategoryGroups?.();
-    state={groups,categories,items,deletedDriveFileIds:[...getDeletedDriveIds()]};
-  }catch(e){ console.warn(e); }
+    await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,{method:'DELETE'});
+  }catch(e){
+    // 이미 삭제되었거나 권한이 없는 경우에도 로컬 재생성은 막습니다.
+    console.warn('Drive delete skipped/failed:', fileId, e);
+  }
+}
+function removeItemsThatAreCarouselSlides(){
+  const slideIds=new Set();
+  const slideNames=new Set();
+  items.forEach(it=>{
+    if(it.type==='carousel' && Array.isArray(it.carousel)){
+      it.carousel.forEach(s=>{
+        if(s.driveFileId) slideIds.add(s.driveFileId);
+        if(s.fileName) slideNames.add(cleanFileBase(s.fileName));
+        if(s.title) slideNames.add(cleanFileBase(s.title));
+      });
+    }
+  });
+  items=items.filter(it=>{
+    if(it.type==='carousel') return true;
+    if(it.driveFileId && slideIds.has(it.driveFileId)) return false;
+    const n=cleanFileBase(it.fileName||it.title||'');
+    if(n && slideNames.has(n)) return false;
+    return true;
+  });
+}
+function buildCarouselGroupsFromLooseAssets(){
+  // Drive assets 폴더에 수동으로 넣은 carousel_01~09 같은 파일은 하나의 캐러셀 카드로 묶습니다.
+  const candidates=items.filter(it=>it.sourceType==='drive_assets' && it.type!=='carousel' && /^image\//.test(it.mimeType||''));
+  const groupsByPrefix=new Map();
+  for(const it of candidates){
+    const name=(it.fileName||it.title||'').trim();
+    const base=name.replace(/\.[^.]+$/,'');
+    const m=base.match(/^(.*?)(?:[_\-\s]?)(\d{1,3})$/);
+    if(!m) continue;
+    const prefix=m[1].replace(/[_\-\s]+$/,'').toLowerCase();
+    if(!prefix || !/carousel|캐러셀|slide|슬라이드/.test(prefix)) continue;
+    if(!groupsByPrefix.has(prefix)) groupsByPrefix.set(prefix,[]);
+    groupsByPrefix.get(prefix).push({...it,_sortNo:Number(m[2])});
+  }
+  for(const [prefix,arr] of groupsByPrefix.entries()){
+    if(arr.length<2) continue;
+    arr.sort((a,b)=>(a._sortNo||0)-(b._sortNo||0));
+    const exists=items.some(it=>it.type==='carousel' && Array.isArray(it.carousel) && arr.some(a=>it.carousel.some(s=>s.driveFileId===a.driveFileId)));
+    if(exists) continue;
+    const slides=arr.map(a=>({
+      id:uid('s'),
+      title:a.title,
+      type:'image',
+      src:a.src||'',
+      previewSrc:a.previewSrc||'',
+      driveFileId:a.driveFileId||'',
+      mimeType:a.mimeType||'',
+      thumbnailLink:a.thumbnailLink||'',
+      fileName:a.fileName||a.title||''
+    }));
+    items.push(normalizeItem({
+      id:uid('car'),
+      title:`${arr[0].fileName?.replace(/[_\-\s]?\d{1,3}\.[^.]+$/,'')||'캐러셀'} 외 ${arr.length-1}개`,
+      type:'carousel',
+      carousel:slides,
+      sourceType:'drive_assets_carousel',
+      ts:Math.max(...arr.map(a=>a.ts||Date.now()))
+    }));
+  }
+  removeItemsThatAreCarouselSlides();
 }
 
+// Drive JSON 저장 시 런타임 전용 blob/_file을 제거합니다.
 async function uploadDataFile(){
-  const folderId=await ensureDriveFolder(); syncState();
-  state.deletedDriveFileIds=[...getDeletedDriveIds()];
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const folderId=await ensureDriveFolder();
+  const safeState=makePersistableState();
+  const blob=new Blob([JSON.stringify(safeState,null,2)],{type:'application/json'});
   if(gdriveDataFileId){
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
-    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId); gdriveDataFileId=f.id;
+    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId);
+    gdriveDataFileId=f.id;
   }
 }
 
-async function deleteDriveFile(fileId){
-  if(!fileId) return false;
-  try{
-    await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`,{method:'DELETE'});
-    objectUrlCache?.delete?.(fileId);
-    return true;
-  }catch(e){
-    console.warn('Drive file delete failed, will keep deleted marker:', fileId, e);
-    return false;
-  }
-}
-
+// assets 폴더 동기화: 캐러셀 안에 들어간 파일은 개별 카드로 재추가하지 않습니다.
 async function syncItemsWithDriveAssets(){
   const assetFolderId=await ensureAssetFolder();
   const deleted=getDeletedDriveIds();
-  const files=(await listDriveFilesRecursive(assetFolderId)).filter(isDriveMediaFile).filter(f=>!deleted.has(f.id));
+  const files=(await listDriveFilesRecursive(assetFolderId)).filter(f=>isDriveMediaFile(f) && !deleted.has(f.id));
   const byId=new Map(files.map(f=>[f.id,f]));
   const byName=new Map(files.map(f=>[cleanFileBase(f.name),f]));
   let linked=0, added=0;
+
   for(const it of items){
     if(it.driveFileId && deleted.has(it.driveFileId)) continue;
     if(it.driveFileId && byId.has(it.driveFileId)){
       const f=byId.get(it.driveFileId);
       it.mimeType=it.mimeType||f.mimeType; it.fileName=it.fileName||f.name; it.thumbnailLink=it.thumbnailLink||f.thumbnailLink||'';
-      continue;
-    }
-    const candidates=[it.fileName,it.title,(it.src||'').split('/').pop(),it.sourceUrl?.split('/').pop()].filter(Boolean).map(cleanFileBase);
-    const hit=candidates.map(k=>byName.get(k)).find(Boolean);
-    if(hit){
-      it.driveFileId=hit.id; it.mimeType=it.mimeType||hit.mimeType; it.fileName=it.fileName||hit.name; it.thumbnailLink=it.thumbnailLink||hit.thumbnailLink||'';
-      if(!it.type || it.type==='link') it.type=hit.mimeType.startsWith('video/')?'video':'image';
-      linked++;
+    }else{
+      const candidates=[it.fileName,it.title,(it.src||'').split('/').pop(),it.sourceUrl?.split('/').pop()].filter(Boolean).map(cleanFileBase);
+      const hit=candidates.map(k=>byName.get(k)).find(Boolean);
+      if(hit){
+        it.driveFileId=hit.id; it.mimeType=it.mimeType||hit.mimeType; it.fileName=it.fileName||hit.name; it.thumbnailLink=it.thumbnailLink||hit.thumbnailLink||'';
+        if(!it.type || it.type==='link') it.type=hit.mimeType.startsWith('video/')?'video':'image';
+        linked++;
+      }
     }
     if(Array.isArray(it.carousel)){
       for(const slide of it.carousel){
         if(slide.driveFileId && deleted.has(slide.driveFileId)) continue;
-        if(slide.driveFileId) continue;
+        if(slide.driveFileId && byId.has(slide.driveFileId)){
+          const f=byId.get(slide.driveFileId);
+          slide.mimeType=slide.mimeType||f.mimeType; slide.fileName=slide.fileName||f.name; slide.thumbnailLink=slide.thumbnailLink||f.thumbnailLink||'';
+          continue;
+        }
         const sc=[slide.fileName,slide.title,(slide.src||'').split('/').pop()].filter(Boolean).map(cleanFileBase);
         const sh=sc.map(k=>byName.get(k)).find(Boolean);
-        if(sh){ slide.driveFileId=sh.id; slide.mimeType=slide.mimeType||sh.mimeType; slide.fileName=slide.fileName||sh.name; slide.thumbnailLink=slide.thumbnailLink||sh.thumbnailLink||''; linked++; }
+        if(sh){
+          slide.driveFileId=sh.id; slide.mimeType=slide.mimeType||sh.mimeType; slide.fileName=slide.fileName||sh.name; slide.thumbnailLink=slide.thumbnailLink||sh.thumbnailLink||'';
+          linked++;
+        }
       }
     }
   }
-  const existing=new Set(items.map(i=>i.driveFileId).filter(Boolean));
-  items.forEach(i=>Array.isArray(i.carousel)&&i.carousel.forEach(s=>{ if(s.driveFileId) existing.add(s.driveFileId); }));
-  files.forEach(f=>{ if(!existing.has(f.id)){ items.push(fileToDriveItem(f)); existing.add(f.id); added++; } });
+
+  const existing=new Set();
+  items.forEach(it=>{
+    if(it.driveFileId) existing.add(it.driveFileId);
+    if(Array.isArray(it.carousel)) it.carousel.forEach(s=>{ if(s.driveFileId) existing.add(s.driveFileId); });
+  });
+  files.forEach(f=>{
+    if(!existing.has(f.id)){
+      items.push(fileToDriveItem(f));
+      existing.add(f.id);
+      added++;
+    }
+  });
+  buildCarouselGroupsFromLooseAssets();
+  removeItemsThatAreCarouselSlides();
   return {linked,added,total:files.length};
 }
 
@@ -1380,17 +1117,19 @@ async function loadFromDrive(){
   try{
     await ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
     const f=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
+    const deleted=getDeletedDriveIds();
     if(f){
       gdriveDataFileId=f.id;
       const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
       groups=Array.isArray(data.groups)?data.groups:[];
       categories=Array.isArray(data.categories)?data.categories:[];
       items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
-      if(Array.isArray(data.deletedDriveFileIds)) rememberDeletedDriveIds(data.deletedDriveFileIds);
     }else{ groups=[]; categories=[]; items=[]; }
-    normalizeCategoryGroups?.();
+    items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
-    saveLocal(); renderAll();
+    normalizeCategoryGroups();
+    saveLocal();
+    renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
   }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
 }
@@ -1398,82 +1137,112 @@ async function loadFromDrive(){
 async function deleteItem(id){
   const it=items.find(i=>i.id===id);
   if(!it) return;
-  const ids=collectItemDriveFileIds(it);
-  const msg=ids.length ? '이 콘텐츠를 삭제할까요?\nDrive에 저장된 이미지/영상 파일도 함께 삭제됩니다.' : '이 콘텐츠를 삭제할까요?';
+  const ids=collectDriveIdsFromItem(it);
+  const msg=ids.length?`삭제할까요?\nDrive 파일 ${ids.length}개도 함께 삭제됩니다.`:'삭제할까요?';
   if(!confirm(msg)) return;
-  items=items.filter(i=>i.id!==id);
   rememberDeletedDriveIds(ids);
+  items=items.filter(i=>i.id!==id);
   if(selectedId===id) closeDetail();
   saveLocal(); renderAll();
-  if(gdriveToken){
+  if(gdriveToken||restoreCachedDriveToken()){
+    await ensureDriveToken().catch(()=>null);
     await Promise.all(ids.map(deleteDriveFile));
-    await uploadDataFile();
-    saveLocal();
-    showToast('삭제 완료 · Drive 동기화됨','success');
-  }else{
-    showToast('보드에서 삭제됨 · Drive 동기화는 Google 연결 후 저장 필요','success');
+    await uploadDataFile().catch(console.warn);
   }
+  showToast('삭제 완료','success');
 }
 
+function carouselThumbStrip(it){
+  if(!Array.isArray(it.carousel)||!it.carousel.length) return '<div class="detail-helper">캐러셀 슬라이드가 없습니다.</div>';
+  return `<div class="detail-section-title">CAROUSEL ITEMS · ${it.carousel.length}개</div><div class="carousel-detail-grid" id="carousel-detail-grid"></div>`;
+}
+function mountCarouselDetailMedia(it){
+  const grid=$('carousel-detail-grid');
+  if(!grid || !Array.isArray(it.carousel)) return;
+  grid.innerHTML='';
+  it.carousel.forEach((s,idx)=>{
+    const wrap=document.createElement('div');
+    wrap.className='carousel-detail-item';
+    const media=document.createElement((s.mimeType||'').startsWith('video/')?'video':'img');
+    if(media.tagName==='VIDEO') media.controls=true;
+    bindDriveMedia(media,s);
+    wrap.appendChild(media);
+    const cap=document.createElement('div');
+    cap.className='carousel-detail-caption';
+    cap.textContent=`${idx+1}. ${s.fileName||s.title||'slide'}`;
+    wrap.appendChild(cap);
+    grid.appendChild(wrap);
+  });
+}
 function renderDetail(){
-  const it=items.find(i=>i.id===selectedId); if(!it) return;
-  const m=$('detail-media'); if(!m) return; m.innerHTML='';
-  if(it.type==='carousel'){
-    const wrap=document.createElement('div'); wrap.className='detail-carousel-wrap';
-    (it.carousel||[]).forEach((s,idx)=>{
-      const box=document.createElement('div'); box.className='detail-carousel-item';
-      const label=document.createElement('div'); label.className='detail-carousel-label'; label.textContent=`${idx+1}/${it.carousel.length} · ${(s.mimeType||'').startsWith('video/')?'VIDEO':'IMAGE'}`; box.appendChild(label);
-      let media;
-      if((s.mimeType||'').startsWith('video/')){ media=document.createElement('video'); media.controls=true; bindDriveMedia(media,s); }
-      else { media=document.createElement('img'); bindDriveMedia(media,s); }
-      box.appendChild(media); wrap.appendChild(box);
-    });
-    m.appendChild(wrap);
-  }else if(it.type==='video'){
-    const el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it); m.appendChild(el);
+  const it=items.find(i=>i.id===selectedId); if(!it)return;
+  const m=$('detail-media'); if(!m)return; m.innerHTML='';
+  let el;
+  if(it.type==='video'){
+    el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it); m.appendChild(el);
+  }else if(it.type==='carousel'){
+    const first=it.carousel?.[0];
+    if(first){
+      el=document.createElement((first.mimeType||'').startsWith('video/')?'video':'img');
+      if(el.tagName==='VIDEO') el.controls=true;
+      bindDriveMedia(el,first); m.appendChild(el);
+    }
   }else if(it.type==='link'){
-    const el=document.createElement('a'); el.href=it.src||it.sourceUrl; el.target='_blank'; el.textContent='원본 링크 열기'; m.appendChild(el);
+    el=document.createElement('a'); el.href=it.src||it.sourceUrl; el.target='_blank'; el.textContent='원본 링크 열기'; m.appendChild(el);
   }else{
-    const el=document.createElement('img'); bindDriveMedia(el,it); m.appendChild(el);
+    el=document.createElement('img'); bindDriveMedia(el,it); m.appendChild(el);
   }
   renderDetailCatOptions();
-  const f=$('detail-fields'); if(!f) return;
+  const f=$('detail-fields');
+  if(!f) return;
   f.innerHTML=`
-    <div class="detail-section-title">콘텐츠 수정</div>
-    <div class="detail-edit-grid">
-      <label class="detail-edit-label">제목<input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></label>
-      <label class="detail-edit-label">브랜드<input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></label>
-      <label class="detail-edit-label">플랫폼<input class="detail-input" id="detail-edit-platform" value="${esc(it.platform||'')}"></label>
-      <label class="detail-edit-label">원본 링크<input class="detail-input" id="detail-edit-source-url" value="${esc(it.sourceUrl||'')}"></label>
-    </div>
-    <label class="detail-edit-label">캡션 / 광고 카피 요약<textarea class="detail-input" id="detail-edit-caption" rows="5">${esc(it.caption||'')}</textarea></label>
-    <label class="detail-edit-label">본문 전체<textarea class="detail-input" id="detail-edit-body" rows="7">${esc(it.body||'')}</textarea></label>
-    <label class="detail-edit-label">훅 / CTA<textarea class="detail-input" id="detail-edit-hook" rows="3">${esc(it.hook||'')}</textarea></label>
-    <label class="detail-edit-label">메모<textarea class="detail-input" id="detail-edit-notes" rows="4">${esc(it.notes||'')}</textarea></label>
-    <div class="detail-actions" style="margin-top:8px;">
+    ${it.type==='carousel'?carouselThumbStrip(it):''}
+    <div class="detail-section-title">수정</div>
+    <div class="form-row"><label class="form-label">제목</label><input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></div>
+    <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
+    <div class="form-row"><label class="form-label">게시물 본문</label><textarea class="detail-input" id="detail-edit-caption" rows="5" placeholder="인스타그램/광고 게시물 본문을 입력하세요">${esc(it.caption||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">훅 / 첫 문장</label><input class="detail-input" id="detail-edit-hook" value="${esc(it.hook||'')}"></div>
+    <div class="form-row"><label class="form-label">CTA</label><input class="detail-input" id="detail-edit-cta" value="${esc(it.cta||'')}"></div>
+    <div class="form-row"><label class="form-label">비주얼 메모</label><textarea class="detail-input" id="detail-edit-visual" rows="3">${esc(it.visualNotes||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">콘텐츠 메모</label><textarea class="detail-input" id="detail-edit-content" rows="3">${esc(it.contentNotes||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">일반 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="3">${esc(it.notes||'')}</textarea></div>
+    <div class="detail-actions">
       <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
       <button class="detail-btn" onclick="renderDetail()">되돌리기</button>
-      <button class="detail-btn danger" onclick="deleteItem('${it.id}')">삭제</button>
+      <button class="detail-btn" style="color:var(--red)" onclick="deleteItem(selectedId)">삭제</button>
     </div>
     <hr class="detail-divider">
-    <div class="detail-section-title">저장 정보</div>
     <div class="detail-field"><div class="detail-key">TYPE</div><div class="detail-val">${esc(it.type||'-')}</div></div>
     <div class="detail-field"><div class="detail-key">DRIVE FILE ID</div><div class="detail-val">${esc(it.driveFileId||'-')}</div></div>
   `;
+  mountCarouselDetailMedia(it);
 }
-
-async function saveDetailEdits(){
-  const it=items.find(i=>i.id===selectedId); if(!it) return;
+function saveDetailEdits(){
+  const it=items.find(i=>i.id===selectedId); if(!it)return;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
-  it.platform=$('detail-edit-platform')?.value.trim()||'';
-  it.sourceUrl=$('detail-edit-source-url')?.value.trim()||'';
   it.caption=$('detail-edit-caption')?.value||'';
-  it.body=$('detail-edit-body')?.value||'';
   it.hook=$('detail-edit-hook')?.value||'';
+  it.cta=$('detail-edit-cta')?.value||'';
+  it.visualNotes=$('detail-edit-visual')?.value||'';
+  it.contentNotes=$('detail-edit-content')?.value||'';
   it.notes=$('detail-edit-notes')?.value||'';
-  it.updatedAt=Date.now();
-  await saveData();
-  renderAll(); renderDetail();
+  saveData();
+  renderBoard(); renderAiTargets(); renderDetail();
   showToast('수정 저장 완료','success');
 }
+
+// 카드 뱃지에 캐러셀 장수 표시
+const __oldCardNodeForCarouselCount=cardNode;
+function cardNode(it){
+  const card=__oldCardNodeForCarouselCount(it);
+  if(it?.type==='carousel' && Array.isArray(it.carousel)){
+    const badge=card.querySelector('.card-type-badge');
+    if(badge) badge.textContent=`CAROUSEL · ${it.carousel.length}`;
+  }
+  return card;
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  setTimeout(()=>{removeItemsThatAreCarouselSlides(); renderAll();},0);
+});
