@@ -1246,3 +1246,187 @@ function cardNode(it){
 window.addEventListener('DOMContentLoaded',()=>{
   setTimeout(()=>{removeItemsThatAreCarouselSlides(); renderAll();},0);
 });
+
+
+/* =====================================================
+   v37 FINAL PATCH — stable Drive auth without gapi conflict
+   - Do not use gapi.js. index.html should load GIS only.
+   - Prevent silent autosave from forcing OAuth popups.
+   - Retry once on 401 with a fresh token.
+   - Friendly error handling for permission/config errors.
+   ===================================================== */
+(function(){
+  const TOKEN_KEY='refboard_google_access_token_v37';
+  const TOKEN_EXP_KEY='refboard_google_access_token_exp_v37';
+  const HAS_AUTH_KEY='refboard_google_has_auth_v37';
+  const now=()=>Date.now();
+
+  function authMessage(err){
+    const raw=(err && (err.message || err.error || JSON.stringify(err))) || '';
+    if(raw.includes('popup_failed_to_open') || raw.includes('popup_closed')) return '브라우저 팝업이 차단됐어요. 팝업 허용 후 Google 연결을 다시 눌러주세요.';
+    if(raw.includes('access_denied')) return 'Drive 권한 승인이 취소됐어요. Google 연결을 다시 눌러 권한을 허용해주세요.';
+    if(raw.includes('invalid_client')) return 'Google OAuth Client ID 설정이 올바르지 않아요. Drive Client ID를 다시 확인해주세요.';
+    if(raw.includes('origin_mismatch') || raw.includes('redirect_uri_mismatch')) return 'Google Cloud의 승인된 JavaScript 원본에 현재 사이트 주소가 등록되어 있지 않아요.';
+    if(raw.includes('insufficient') || raw.includes('forbidden') || raw.includes('403')) return 'Drive 접근 권한이 부족해요. Google 연결을 다시 눌러 권한을 재승인해주세요.';
+    if(raw.includes('401') || raw.includes('invalid_token')) return 'Drive 인증이 만료됐어요. Google 연결을 다시 눌러주세요.';
+    return raw || 'Google Drive 연결 중 오류가 발생했어요.';
+  }
+  window.getDriveAuthErrorMessage=authMessage;
+
+  window.clearDriveAuthCache=function clearDriveAuthCache(){
+    try{
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_EXP_KEY);
+      localStorage.removeItem('refboard_drive_token');
+      localStorage.removeItem('refboard_drive_token_exp');
+    }catch(e){}
+    gdriveToken=null;
+    if(typeof updateDriveUi==='function') updateDriveUi();
+  };
+
+  window.cacheDriveToken=function cacheDriveToken(token,expiresIn){
+    if(!token) return;
+    const exp=now()+Math.max(0,Number(expiresIn||3600)-120)*1000;
+    gdriveToken=token;
+    try{
+      sessionStorage.setItem(TOKEN_KEY,token);
+      sessionStorage.setItem(TOKEN_EXP_KEY,String(exp));
+      localStorage.setItem(HAS_AUTH_KEY,'1');
+      // old key compatibility
+      sessionStorage.setItem('refboard_google_access_token_v36',token);
+      sessionStorage.setItem('refboard_google_access_token_exp_v36',String(exp));
+      localStorage.setItem('refboard_google_has_auth_v36','1');
+    }catch(e){ console.warn(e); }
+    if(typeof updateDriveUi==='function') updateDriveUi();
+  };
+
+  window.restoreCachedDriveToken=function restoreCachedDriveToken(){
+    try{
+      const token=sessionStorage.getItem(TOKEN_KEY)||sessionStorage.getItem('refboard_google_access_token_v36')||'';
+      const exp=Number(sessionStorage.getItem(TOKEN_EXP_KEY)||sessionStorage.getItem('refboard_google_access_token_exp_v36')||0);
+      if(token && exp>now()+30000){
+        gdriveToken=token;
+        if(typeof updateDriveUi==='function') updateDriveUi();
+        return token;
+      }
+    }catch(e){ console.warn(e); }
+    return '';
+  };
+
+  window.requestDriveToken=function requestDriveToken(promptMode=''){
+    const {clientId}=getGapiConfig();
+    if(!clientId){ openGdriveSetup(); return Promise.reject(new Error('Google OAuth Client ID가 없습니다.')); }
+    if(!window.google || !window.google.accounts || !window.google.accounts.oauth2){
+      return Promise.reject(new Error('Google Identity Services 스크립트를 불러오지 못했습니다.'));
+    }
+    return new Promise((resolve,reject)=>{
+      try{
+        tokenClient=google.accounts.oauth2.initTokenClient({
+          client_id:clientId,
+          scope:DRIVE_SCOPE,
+          callback:(res)=>{
+            if(res && res.error){ reject(res); return; }
+            cacheDriveToken(res.access_token,res.expires_in);
+            resolve(res.access_token);
+          }
+        });
+        tokenClient.requestAccessToken({prompt:promptMode});
+      }catch(e){ reject(e); }
+    });
+  };
+
+  window.ensureDriveToken=async function ensureDriveToken(forceConsent=false, options={}){
+    const allowInteractive=options.allowInteractive!==false;
+    if(!forceConsent){
+      if(gdriveToken) return gdriveToken;
+      const cached=restoreCachedDriveToken();
+      if(cached) return cached;
+    }
+    const hasAuth=localStorage.getItem(HAS_AUTH_KEY)==='1' || localStorage.getItem('refboard_google_has_auth_v36')==='1';
+    if(!allowInteractive && !hasAuth) throw new Error('Drive 인증이 필요합니다.');
+    try{
+      return await requestDriveToken(forceConsent?'consent':(hasAuth?'':'consent'));
+    }catch(e){
+      // Silent attempt failed after previous approval. On user-click flows, ask consent once.
+      if(allowInteractive && !forceConsent && hasAuth){
+        return await requestDriveToken('consent');
+      }
+      throw e;
+    }
+  };
+
+  window.gdriveSignIn=async function gdriveSignIn(){
+    try{
+      await ensureDriveToken(true,{allowInteractive:true});
+      await ensureDriveFolder();
+      await ensureAssetFolder();
+      if(typeof showToast==='function') showToast('Google Drive 연결 완료','success');
+    }catch(e){
+      console.error(e);
+      if(typeof showToast==='function') showToast(authMessage(e),'error');
+    }
+  };
+
+  window.updateDriveUi=function updateDriveUi(){
+    const connected=!!(gdriveToken||restoreCachedDriveToken());
+    const status=$('gdrive-status'); if(status) status.textContent=connected?'Drive 연결됨':'Drive 미연결';
+    const banner=$('gdrive-setup-banner'); if(banner) banner.style.display=getGapiConfig().clientId?'none':'inline-block';
+    const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
+  };
+
+  window.driveFetch=async function driveFetch(url,opts={},retry=true){
+    const token=await ensureDriveToken(false,{allowInteractive:true});
+    const headers={Authorization:`Bearer ${token}`,...(opts.headers||{})};
+    const res=await fetch(url,{...opts,headers});
+    if(res.status===401 && retry){
+      clearDriveAuthCache();
+      await ensureDriveToken(true,{allowInteractive:true});
+      return driveFetch(url,opts,false);
+    }
+    if(!res.ok){
+      const txt=await res.text().catch(()=>'');
+      const err=new Error(`Drive 요청 실패 ${res.status}: ${txt}`);
+      err.status=res.status;
+      err.responseText=txt;
+      throw err;
+    }
+    return res;
+  };
+
+  // Avoid background autosave opening OAuth popup or showing permission errors.
+  window.saveData=async function saveData(){
+    updateAutosave('saving');
+    saveLocal();
+    if(gdriveToken||restoreCachedDriveToken()){
+      try{ await saveToDrive(true); }
+      catch(e){ console.warn('Background Drive save skipped:',e); }
+    }
+  };
+
+  const oldSaveToDrive=window.saveToDrive;
+  if(typeof oldSaveToDrive==='function'){
+    window.saveToDrive=async function saveToDrive(silent=false){
+      try{ return await oldSaveToDrive(silent); }
+      catch(e){
+        console.error(e);
+        if(!silent && typeof showToast==='function') showToast(authMessage(e),'error');
+      }
+    };
+  }
+
+  const oldLoadFromDrive=window.loadFromDrive;
+  if(typeof oldLoadFromDrive==='function'){
+    window.loadFromDrive=async function loadFromDrive(){
+      try{ return await oldLoadFromDrive(); }
+      catch(e){
+        console.error(e);
+        if(typeof showToast==='function') showToast(authMessage(e),'error');
+      }
+    };
+  }
+
+  window.addEventListener('DOMContentLoaded',()=>{
+    restoreCachedDriveToken();
+    if(typeof updateDriveUi==='function') updateDriveUi();
+  });
+})();
