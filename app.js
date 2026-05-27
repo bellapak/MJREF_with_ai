@@ -1306,7 +1306,7 @@ window.addEventListener('DOMContentLoaded',()=>{
       const exp=Number(sessionStorage.getItem(TOKEN_EXP_KEY)||sessionStorage.getItem('refboard_google_access_token_exp_v36')||0);
       if(token && exp>now()+30000){
         gdriveToken=token;
-        if(typeof updateDriveUi==='function') updateDriveUi();
+        // 중요: 여기서 updateDriveUi()를 호출하면 updateDriveUi → restoreCachedDriveToken → updateDriveUi 재귀가 발생합니다.
         return token;
       }
     }catch(e){ console.warn(e); }
@@ -1368,7 +1368,9 @@ window.addEventListener('DOMContentLoaded',()=>{
   };
 
   window.updateDriveUi=function updateDriveUi(){
-    const connected=!!(gdriveToken||restoreCachedDriveToken());
+    // restoreCachedDriveToken()을 여기서 호출하지 않습니다.
+    // 토큰 복원은 DOMContentLoaded / ensureDriveToken에서만 수행해 콜스택 재귀를 방지합니다.
+    const connected=!!gdriveToken;
     const status=$('gdrive-status'); if(status) status.textContent=connected?'Drive 연결됨':'Drive 미연결';
     const banner=$('gdrive-setup-banner'); if(banner) banner.style.display=getGapiConfig().clientId?'none':'inline-block';
     const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
