@@ -1,5 +1,5 @@
 // =====================================================
-// refboard - app.js (Consolidated & Drive Auth Fixed)
+// refboard - app.js (Performance Optimized & Drive Fixed)
 // =====================================================
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
@@ -404,6 +404,7 @@ async function loadFromDrive(){
   }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
 }
 
+// ─── Image Lazy Loading & Drive API Fetcher ───
 async function getDriveObjectURL(fileId,mimeType=''){
   if(!fileId) return '';
   if(objectUrlCache.has(fileId)) return objectUrlCache.get(fileId);
@@ -412,6 +413,22 @@ async function getDriveObjectURL(fileId,mimeType=''){
   const url=URL.createObjectURL(blob.type?blob:new Blob([blob],{type:mimeType||'application/octet-stream'}));
   objectUrlCache.set(fileId,url); return url;
 }
+
+const driveImageObserver = new IntersectionObserver((entries, observer) => {
+  entries.forEach(entry => {
+    if(entry.isIntersecting){
+      const img = entry.target;
+      const fileId = img.dataset.driveId;
+      const mimeType = img.dataset.mimeType;
+      if(fileId){
+        observer.unobserve(img); // 한 번 로드 시도 후 해제
+        getDriveObjectURL(fileId, mimeType).then(url => {
+          if(url) img.src = url;
+        }).catch(err => console.warn('Lazy load failed:', err));
+      }
+    }
+  });
+}, { rootMargin: '300px', threshold: 0.01 });
 
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
@@ -485,21 +502,40 @@ async function deleteItem(id){
   showToast('삭제 완료','success');
 }
 
-// ─── Media Binding ───
+// ─── Media Binding (Lazy Loaded) ───
 function bindCardMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
   if(it.previewSrc){ el.src=it.previewSrc; return; }
   if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
   if(it.src && !it.driveFileId){ el.src=it.src; return; }
+  
   if(it.driveFileId){
-    if(it.thumbnailLink){ el.src=it.thumbnailLink; return; }
-    if((it.mimeType||'').startsWith('image/')){
-      if(placeholder) el.src=placeholder;
-      getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; });
+    if((it.mimeType||'').startsWith('video/')){
+      el.removeAttribute('src');
+      el.style.background='var(--s3)';
       return;
     }
-    if((it.mimeType||'').startsWith('video/')){ el.removeAttribute('src'); el.style.background='var(--s3)'; return; }
+
+    const fallbackToLazyBlob = () => {
+      el.onerror = null; 
+      el.dataset.driveId = it.driveFileId;
+      el.dataset.mimeType = it.mimeType;
+      driveImageObserver.observe(el);
+    };
+
+    if(it.thumbnailLink){
+      el.onerror = fallbackToLazyBlob;
+      el.src = it.thumbnailLink;
+      return;
+    }
+    
+    if((it.mimeType||'').startsWith('image/')){
+      el.onerror = fallbackToLazyBlob;
+      el.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
+      return;
+    }
   }
+  
   if(placeholder) el.src=placeholder;
 }
 
@@ -507,7 +543,9 @@ function bindDriveMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
   if(it.previewSrc){ el.src=it.previewSrc; return; }
   if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
-  if(it.driveFileId){ getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; }); }
+  if(it.driveFileId){ 
+    getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; }); 
+  }
   else if(it.src) el.src=it.src;
   else if(placeholder) el.src=placeholder;
 }
@@ -561,7 +599,9 @@ function cardNode(it){
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
   let media;
   if(it.type==='video'){
-    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){} } media.play().catch(()=>{}); }; media.onmouseleave=()=>{media.pause(); if(media.currentTime) media.currentTime=0;};
+    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); 
+    media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){} } media.play().catch(()=>{}); }; 
+    media.onmouseleave=()=>{media.pause(); if(media.currentTime) media.currentTime=0;};
   }else if(it.type==='carousel'){
     const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,firstSlide); media.alt=it.title;
   }else if(it.type==='link'){
@@ -916,7 +956,6 @@ window.addEventListener('DOMContentLoaded',()=>{
   normalizeCategoryGroups();
   installReliablePasteListener();
   
-  // Clean up any stray carousel components before first render
   removeItemsThatAreCarouselSlides();
   
   renderAll(); 
