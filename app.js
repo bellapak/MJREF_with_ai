@@ -1,5 +1,5 @@
 // =====================================================
-// refboard - app.js (Anti-Flicker, Performance Optimized, Error Fixed)
+// refboard - app.js (Data Loss Fixed & Performance Optimized)
 // =====================================================
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
@@ -476,6 +476,8 @@ function removeItemsThatAreCarouselSlides(){
     return true;
   });
 }
+
+// 💡 데이터 누락 해결: 첫 번째 슬라이드의 텍스트 정보를 마스터 카드에 상속합니다.
 function buildCarouselGroupsFromLooseAssets(){
   const candidates=items.filter(it=>it.sourceType==='drive_assets' && it.type!=='carousel' && /^image\//.test(it.mimeType||''));
   const groupsByPrefix=new Map();
@@ -494,8 +496,35 @@ function buildCarouselGroupsFromLooseAssets(){
     arr.sort((a,b)=>(a._sortNo||0)-(b._sortNo||0));
     const exists=items.some(it=>it.type==='carousel' && Array.isArray(it.carousel) && arr.some(a=>it.carousel.some(s=>s.driveFileId===a.driveFileId)));
     if(exists) continue;
-    const slides=arr.map(a=>({ id:uid('s'), title:a.title, type:'image', src:a.src||'', previewSrc:a.previewSrc||'', driveFileId:a.driveFileId||'', mimeType:a.mimeType||'', thumbnailLink:a.thumbnailLink||'', fileName:a.fileName||a.title||'' }));
-    items.push(normalizeItem({ id:uid('car'), title:`${arr[0].fileName?.replace(/[_\-\s]?\d{1,3}\.[^.]+$/,'')||'캐러셀'} 외 ${arr.length-1}개`, type:'carousel', carousel:slides, sourceType:'drive_assets_carousel', ts:Math.max(...arr.map(a=>a.ts||Date.now())) }));
+
+    // 데이터 복원을 위해 첫 번째 이미지를 기준으로 삼습니다.
+    const first = arr[0];
+
+    const slides=arr.map(a=>({ 
+      id:uid('s'), title:a.title, type:'image', src:a.src||'', previewSrc:a.previewSrc||'', 
+      driveFileId:a.driveFileId||'', mimeType:a.mimeType||'', thumbnailLink:a.thumbnailLink||'', 
+      fileName:a.fileName||a.title||'',
+      caption:a.caption||'', hook:a.hook||'', brand:a.brand||'', cta:a.cta||'',
+      visualNotes:a.visualNotes||'', contentNotes:a.contentNotes||'', notes:a.notes||'' 
+    }));
+    
+    items.push(normalizeItem({ 
+      id:uid('car'), 
+      title:`${first.fileName?.replace(/[_\-\s]?\d{1,3}\.[^.]+$/,'')||'캐러셀'} 외 ${arr.length-1}개`, 
+      type:'carousel', 
+      carousel:slides, 
+      sourceType:'drive_assets_carousel', 
+      ts:Math.max(...arr.map(a=>a.ts||Date.now())),
+      // 💡 여기서 기존의 카테고리, 캡션, 메모 데이터를 모두 살려냅니다.
+      catIds: first.catIds||[],
+      brand: first.brand||'',
+      caption: first.caption||'',
+      hook: first.hook||'',
+      cta: first.cta||'',
+      visualNotes: first.visualNotes||'',
+      contentNotes: first.contentNotes||'',
+      notes: first.notes||''
+    }));
   }
   removeItemsThatAreCarouselSlides();
 }
@@ -840,7 +869,6 @@ function handlePaste(cd){
   Promise.all(stringJobs).then(()=>{ if(added){ saveData(); renderAll(); showToast(`${added}개 붙여넣기 완료`,'success'); } });
 }
 
-// ✨ 수정 포인트: index.html에 있던 tryClipboardPaste 함수 재추가
 async function tryClipboardPaste(e){ 
   e?.stopPropagation(); 
   await readClipboardNow(e); 
