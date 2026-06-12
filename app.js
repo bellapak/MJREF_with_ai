@@ -446,6 +446,28 @@ const driveImageObserver = new IntersectionObserver((entries, observer) => {
   });
 }, { rootMargin: '300px', threshold: 0.01 });
 
+// 외부 URL 이미지용 lazy observer — src 세팅 자체를 뷰포트 진입 시점까지 지연
+const srcLazyObserver = new IntersectionObserver((entries, observer) => {
+  entries.forEach(entry => {
+    if(entry.isIntersecting){
+      const img = entry.target;
+      const lazySrc = img.dataset.lazySrc;
+      const lazyFallbackId = img.dataset.lazyFallbackId;
+      const lazyFallbackMime = img.dataset.lazyFallbackMime;
+      if(lazySrc){
+        observer.unobserve(img);
+        img.onerror = lazyFallbackId ? () => {
+          img.onerror = null;
+          img.dataset.driveId = lazyFallbackId;
+          img.dataset.mimeType = lazyFallbackMime || '';
+          driveImageObserver.observe(img);
+        } : null;
+        img.src = lazySrc;
+      }
+    }
+  });
+}, { rootMargin: '400px', threshold: 0.01 });
+
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
 function persistDeletedDriveIds(set){localStorage.setItem(DELETED_DRIVE_IDS_KEY,JSON.stringify([...set]));}
@@ -550,9 +572,16 @@ async function deleteItem(id){
 // ─── Media Binding (Lazy Loaded) ───
 function bindCardMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
+  // blob/previewSrc는 이미 메모리에 있으므로 즉시 세팅
   if(it.previewSrc){ el.src=it.previewSrc; return; }
   if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
-  if(it.src && !it.driveFileId){ el.src=it.src; return; }
+
+  // 외부 URL (Drive 없음) — srcLazyObserver로 뷰포트 진입 시 로드
+  if(it.src && !it.driveFileId){
+    el.dataset.lazySrc = it.src;
+    srcLazyObserver.observe(el);
+    return;
+  }
   
   if(it.driveFileId){
     if((it.mimeType||'').startsWith('video/')){
@@ -562,21 +591,26 @@ function bindCardMedia(el,it,placeholder=''){
     }
 
     const fallbackToLazyBlob = () => {
-      el.onerror = null; 
+      el.onerror = null;
       el.dataset.driveId = it.driveFileId;
       el.dataset.mimeType = it.mimeType;
       driveImageObserver.observe(el);
     };
 
+    // thumbnailLink / Drive thumbnail — srcLazyObserver로 지연 로드, 실패 시 blob fallback
     if(it.thumbnailLink){
-      el.onerror = fallbackToLazyBlob;
-      el.src = it.thumbnailLink;
+      el.dataset.lazySrc = it.thumbnailLink;
+      el.dataset.lazyFallbackId = it.driveFileId;
+      el.dataset.lazyFallbackMime = it.mimeType||'';
+      srcLazyObserver.observe(el);
       return;
     }
     
     if((it.mimeType||'').startsWith('image/')){
-      el.onerror = fallbackToLazyBlob;
-      el.src = `https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
+      el.dataset.lazySrc = `https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
+      el.dataset.lazyFallbackId = it.driveFileId;
+      el.dataset.lazyFallbackMime = it.mimeType||'';
+      srcLazyObserver.observe(el);
       return;
     }
   }
