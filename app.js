@@ -38,6 +38,16 @@ let currentAiCatFilter='';
 let renderTimer=null;
 let boardRenderJob=0;
 let objectUrlCache=new Map();
+let objectBlobCache=new Map();
+let objectUrlPromiseCache=new Map();
+let thumbUrlPromiseCache=new Map();
+let driveBlobPromiseCache=new Map();
+let localBlobDbPromise=null;
+let driveFetchActive=0;
+let driveFetchQueue=[];
+const DRIVE_FETCH_CONCURRENCY=4;
+const LOCAL_MEDIA_DB_NAME='refboard-local-media-v1';
+const LOCAL_MEDIA_STORE_NAME='media';
 let state={items:[]};
 const collapsedGroups = new Set(JSON.parse(localStorage.getItem('refboard_collapsed_groups')||'[]'));
 
@@ -64,6 +74,7 @@ function normalizeItem(raw={}){
     mimeType: raw.mimeType || raw.fileType || '',
     thumbnailLink: raw.thumbnailLink || raw.thumbnail || '',
     fileName: raw.fileName || raw.filename || raw.name || '',
+    localBlobKey: raw.localBlobKey || '',
     catIds: Array.isArray(raw.catIds)?raw.catIds:[],
     platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl: raw.sourceUrl || raw.source_url || '',
     caption: raw.caption || raw.description || raw.text || '', hook: raw.hook || raw.headline || '', cta: raw.cta || '',
@@ -104,7 +115,9 @@ function saveLocal(){
 
 async function saveData(){
   updateAutosave('saving');
+  const localCachePromise=cachePendingLocalFiles().catch(console.warn);
   saveLocal();
+  await localCachePromise;
   if(gdriveToken||restoreCachedDriveToken()) saveToDrive(true);
 }
 
@@ -421,13 +434,154 @@ async function loadFromDrive(){
 }
 
 // ─── Image Lazy Loading & Drive API Fetcher ───
+function runDriveFetchQueue(){
+  while(driveFetchActive<DRIVE_FETCH_CONCURRENCY && driveFetchQueue.length){
+    const job=driveFetchQueue.shift();
+    driveFetchActive++;
+    job.task()
+      .then(job.resolve)
+      .catch(job.reject)
+      .finally(()=>{ driveFetchActive--; runDriveFetchQueue(); });
+  }
+}
+
+function enqueueDriveJob(task){
+  return new Promise((resolve,reject)=>{
+    driveFetchQueue.push({task,resolve,reject});
+    runDriveFetchQueue();
+  });
+}
+
+async function fetchDriveMediaBlobRaw(fileId,mimeType=''){
+  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`);
+  const blob=await res.blob();
+  return blob.type ? blob : new Blob([blob],{type:mimeType||'application/octet-stream'});
+}
+
+async function getDriveBlob(fileId,mimeType=''){
+  if(!fileId) return null;
+  if(objectBlobCache.has(fileId)) return objectBlobCache.get(fileId);
+  if(driveBlobPromiseCache.has(fileId)) return driveBlobPromiseCache.get(fileId);
+  const promise=enqueueDriveJob(async()=>{
+    const blob=await fetchDriveMediaBlobRaw(fileId,mimeType);
+    objectBlobCache.set(fileId,blob);
+    return blob;
+  }).finally(()=>driveBlobPromiseCache.delete(fileId));
+  driveBlobPromiseCache.set(fileId,promise);
+  return promise;
+}
+
 async function getDriveObjectURL(fileId,mimeType=''){
   if(!fileId) return '';
-  if(objectUrlCache.has(fileId)) return objectUrlCache.get(fileId);
-  const res=await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`);
-  const blob=await res.blob();
-  const url=URL.createObjectURL(blob.type?blob:new Blob([blob],{type:mimeType||'application/octet-stream'}));
-  objectUrlCache.set(fileId,url); return url;
+  const cacheKey='drive:'+fileId;
+  if(objectUrlCache.has(cacheKey)) return objectUrlCache.get(cacheKey);
+  if(objectUrlPromiseCache.has(cacheKey)) return objectUrlPromiseCache.get(cacheKey);
+  const promise=getDriveBlob(fileId,mimeType).then(blob=>{
+    if(!blob) return '';
+    const url=URL.createObjectURL(blob);
+    objectUrlCache.set(cacheKey,url);
+    return url;
+  }).finally(()=>objectUrlPromiseCache.delete(cacheKey));
+  objectUrlPromiseCache.set(cacheKey,promise);
+  return promise;
+}
+
+async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink=''){
+  if(!fileId) return '';
+  const cacheKey='thumb:'+fileId;
+  if(objectUrlCache.has(cacheKey)) return objectUrlCache.get(cacheKey);
+  if(thumbUrlPromiseCache.has(cacheKey)) return thumbUrlPromiseCache.get(cacheKey);
+
+  const promise=enqueueDriveJob(async()=>{
+    if(thumbnailLink){
+      try{
+        const token=await ensureDriveToken();
+        const res=await fetch(thumbnailLink,{headers:{Authorization:`Bearer ${token}`}});
+        if(res.ok){
+          const blob=await res.blob();
+          if(blob && blob.size){
+            const url=URL.createObjectURL(blob);
+            objectUrlCache.set(cacheKey,url);
+            return url;
+          }
+        }
+      }catch(e){
+        console.warn('Drive thumbnail fallback to media:', e);
+      }
+    }
+    const blob=await fetchDriveMediaBlobRaw(fileId,mimeType);
+    objectBlobCache.set(fileId,blob);
+    const url=URL.createObjectURL(blob);
+    objectUrlCache.set(cacheKey,url);
+    objectUrlCache.set('drive:'+fileId,url);
+    return url;
+  }).finally(()=>thumbUrlPromiseCache.delete(cacheKey));
+
+  thumbUrlPromiseCache.set(cacheKey,promise);
+  return promise;
+}
+
+function openLocalBlobDb(){
+  if(!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB를 사용할 수 없습니다.'));
+  if(localBlobDbPromise) return localBlobDbPromise;
+  localBlobDbPromise=new Promise((resolve,reject)=>{
+    const req=indexedDB.open(LOCAL_MEDIA_DB_NAME,1);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains(LOCAL_MEDIA_STORE_NAME)) db.createObjectStore(LOCAL_MEDIA_STORE_NAME,{keyPath:'key'});
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+  return localBlobDbPromise;
+}
+
+async function saveLocalBlob(key,blob,meta={}){
+  if(!key||!blob) return;
+  try{
+    const db=await openLocalBlobDb();
+    await new Promise((resolve,reject)=>{
+      const tx=db.transaction(LOCAL_MEDIA_STORE_NAME,'readwrite');
+      tx.objectStore(LOCAL_MEDIA_STORE_NAME).put({key,blob,meta,ts:Date.now()});
+      tx.oncomplete=resolve;
+      tx.onerror=()=>reject(tx.error);
+    });
+  }catch(e){ console.warn('로컬 미디어 캐시 저장 실패:', e); }
+}
+
+async function getLocalBlob(key){
+  if(!key) return null;
+  try{
+    const db=await openLocalBlobDb();
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction(LOCAL_MEDIA_STORE_NAME,'readonly');
+      const req=tx.objectStore(LOCAL_MEDIA_STORE_NAME).get(key);
+      req.onsuccess=()=>resolve(req.result?.blob||null);
+      req.onerror=()=>reject(req.error);
+    });
+  }catch(e){ console.warn('로컬 미디어 캐시 읽기 실패:', e); return null; }
+}
+
+async function getLocalBlobObjectURL(key){
+  const cacheKey='local:'+key;
+  if(objectUrlCache.has(cacheKey)) return objectUrlCache.get(cacheKey);
+  const blob=await getLocalBlob(key);
+  if(!blob) return '';
+  const url=URL.createObjectURL(blob);
+  objectUrlCache.set(cacheKey,url);
+  return url;
+}
+
+function cachePendingLocalFiles(){
+  const jobs=[];
+  const collect=(media)=>{
+    if(media?._file && media.localBlobKey) jobs.push(saveLocalBlob(media.localBlobKey,media._file,{fileName:media.fileName||media.title||'',mimeType:media.mimeType||media._file.type||''}));
+  };
+  items.forEach(it=>{
+    collect(it);
+    if(Array.isArray(it.carousel)) it.carousel.forEach(collect);
+  });
+  return Promise.allSettled(jobs);
 }
 
 const driveImageObserver = new IntersectionObserver((entries, observer) => {
@@ -436,15 +590,20 @@ const driveImageObserver = new IntersectionObserver((entries, observer) => {
       const img = entry.target;
       const fileId = img.dataset.driveId;
       const mimeType = img.dataset.mimeType;
+      const thumb = img.dataset.driveThumb || '';
       if(fileId){
-        observer.unobserve(img); 
-        getDriveObjectURL(fileId, mimeType).then(url => {
+        observer.unobserve(img);
+        img.classList.add('media-loading');
+        getDriveThumbnailObjectURL(fileId, mimeType, thumb).then(url => {
           if(url) img.src = url;
-        }).catch(err => console.warn('Lazy load failed:', err));
+        }).catch(err => {
+          console.warn('Drive image lazy load failed:', err);
+          img.classList.add('media-error');
+        }).finally(()=>img.classList.remove('media-loading'));
       }
     }
   });
-}, { rootMargin: '300px', threshold: 0.01 });
+}, { rootMargin: '700px', threshold: 0.01 });
 
 // 외부 URL 이미지용 lazy observer — src 세팅 자체를 뷰포트 진입 시점까지 지연
 const srcLazyObserver = new IntersectionObserver((entries, observer) => {
@@ -454,19 +613,23 @@ const srcLazyObserver = new IntersectionObserver((entries, observer) => {
       const lazySrc = img.dataset.lazySrc;
       const lazyFallbackId = img.dataset.lazyFallbackId;
       const lazyFallbackMime = img.dataset.lazyFallbackMime;
+      const lazyFallbackThumb = img.dataset.lazyFallbackThumb || '';
       if(lazySrc){
         observer.unobserve(img);
+        img.classList.add('media-loading');
         img.onerror = lazyFallbackId ? () => {
           img.onerror = null;
           img.dataset.driveId = lazyFallbackId;
           img.dataset.mimeType = lazyFallbackMime || '';
+          img.dataset.driveThumb = lazyFallbackThumb;
           driveImageObserver.observe(img);
-        } : null;
+        } : () => { img.classList.add('media-error'); img.classList.remove('media-loading'); };
+        img.onload = () => img.classList.remove('media-loading');
         img.src = lazySrc;
       }
     }
   });
-}, { rootMargin: '400px', threshold: 0.01 });
+}, { rootMargin: '700px', threshold: 0.01 });
 
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
@@ -570,62 +733,69 @@ async function deleteItem(id){
 }
 
 // ─── Media Binding (Lazy Loaded) ───
-function bindCardMedia(el,it,placeholder=''){
-  if(!it){ if(placeholder) el.src=placeholder; return; }
-  // blob/previewSrc는 이미 메모리에 있으므로 즉시 세팅
-  if(it.previewSrc){ el.src=it.previewSrc; return; }
-  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
-
-  // 외부 URL (Drive 없음) — srcLazyObserver로 뷰포트 진입 시 로드
+function bindRemoteCardMedia(el,it,placeholder=''){
   if(it.src && !it.driveFileId){
     el.dataset.lazySrc = it.src;
     srcLazyObserver.observe(el);
     return;
   }
-  
+
   if(it.driveFileId){
     if((it.mimeType||'').startsWith('video/')){
       el.removeAttribute('src');
+      el.preload='none';
       el.style.background='var(--s3)';
       return;
     }
 
-    const fallbackToLazyBlob = () => {
-      el.onerror = null;
+    if((it.mimeType||'').startsWith('image/') || it.type==='image' || !it.mimeType){
       el.dataset.driveId = it.driveFileId;
-      el.dataset.mimeType = it.mimeType;
+      el.dataset.mimeType = it.mimeType || '';
+      el.dataset.driveThumb = it.thumbnailLink || '';
       driveImageObserver.observe(el);
-    };
-
-    // thumbnailLink / Drive thumbnail — srcLazyObserver로 지연 로드, 실패 시 blob fallback
-    if(it.thumbnailLink){
-      el.dataset.lazySrc = it.thumbnailLink;
-      el.dataset.lazyFallbackId = it.driveFileId;
-      el.dataset.lazyFallbackMime = it.mimeType||'';
-      srcLazyObserver.observe(el);
-      return;
-    }
-    
-    if((it.mimeType||'').startsWith('image/')){
-      el.dataset.lazySrc = `https://drive.google.com/thumbnail?id=${encodeURIComponent(it.driveFileId)}&sz=w360`;
-      el.dataset.lazyFallbackId = it.driveFileId;
-      el.dataset.lazyFallbackMime = it.mimeType||'';
-      srcLazyObserver.observe(el);
       return;
     }
   }
-  
+
   if(placeholder) el.src=placeholder;
+}
+
+function bindCardMedia(el,it,placeholder=''){
+  if(!it){ if(placeholder) el.src=placeholder; return; }
+  if(it.previewSrc){ el.src=it.previewSrc; return; }
+  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
+
+  if(it.localBlobKey){
+    getLocalBlobObjectURL(it.localBlobKey)
+      .then(url=>{ if(url) el.src=url; else bindRemoteCardMedia(el,it,placeholder); })
+      .catch(()=>bindRemoteCardMedia(el,it,placeholder));
+    return;
+  }
+
+  bindRemoteCardMedia(el,it,placeholder);
 }
 
 function bindDriveMedia(el,it,placeholder=''){
   if(!it){ if(placeholder) el.src=placeholder; return; }
   if(it.previewSrc){ el.src=it.previewSrc; return; }
   if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
-  if(it.driveFileId){ 
-    getDriveObjectURL(it.driveFileId,it.mimeType).then(u=>{ if(u) el.src=u; }).catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; }); 
+  if(it.localBlobKey){
+    getLocalBlobObjectURL(it.localBlobKey)
+      .then(url=>{ if(url) el.src=url; else bindDriveMediaRemote(el,it,placeholder); })
+      .catch(()=>bindDriveMediaRemote(el,it,placeholder));
+    return;
   }
-  else if(it.src) el.src=it.src;
+  bindDriveMediaRemote(el,it,placeholder);
+}
+
+function bindDriveMediaRemote(el,it,placeholder=''){
+  if(it.driveFileId){
+    el.classList.add('media-loading');
+    getDriveObjectURL(it.driveFileId,it.mimeType)
+      .then(u=>{ if(u) el.src=u; })
+      .catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; })
+      .finally(()=>el.classList.remove('media-loading'));
+  } else if(it.src) el.src=it.src;
   else if(placeholder) el.src=placeholder;
 }
 
@@ -676,6 +846,12 @@ function pasteBarNode(){
 function cardNode(it){
   const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
+  if(isDownloadableItem(it)){
+    const dl=document.createElement('button');
+    dl.className='card-download'; dl.textContent='↓'; dl.title='다운로드';
+    dl.onclick=(e)=>{e.stopPropagation(); downloadItemMedia(it.id);};
+    card.appendChild(dl);
+  }
   let media;
   if(it.type==='video'){
     media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); 
@@ -831,20 +1007,24 @@ function saveNewGroup(){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; $('modal-file-name').textContent=''; $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
 function fileToItem(file, extra={}){
   const isVideo=(file.type||'').startsWith('video/');
   const previewSrc=URL.createObjectURL(file);
-  return {
-    id: uid(), title: extra.title||file.name||'붙여넣기 이미지', type: isVideo?'video':'image', src: previewSrc, previewSrc,
-    driveFileId:'', mimeType:file.type||'image/png', fileName:file.name||`paste_${Date.now()}.png`,
+  const id=uid();
+  const localBlobKey=extra.localBlobKey||`item:${id}`;
+  const item={
+    id, title: extra.title||file.name||'붙여넣기 이미지', type: isVideo?'video':'image', src: previewSrc, previewSrc,
+    driveFileId:'', mimeType:file.type||'image/png', fileName:file.name||`paste_${Date.now()}.png`, localBlobKey,
     catIds:Array.isArray(extra.catIds)?extra.catIds:[], platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
     caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
     carousel:Array.isArray(extra.carousel)?extra.carousel:[], ts:extra.ts||Date.now(), _file:file
   };
+  saveLocalBlob(localBlobKey,file,{fileName:item.fileName,mimeType:item.mimeType}).catch(console.warn);
+  return item;
 }
 
 function handleModalFile(e){ pendingFile=e.target.files?.[0]||null; $('modal-file-name').textContent=pendingFile?pendingFile.name:''; if(pendingFile&&!$('add-title').value) $('add-title').value=pendingFile.name; }
@@ -855,7 +1035,12 @@ async function saveFromModal(){
   const url=$('add-url').value.trim();
   if(modalMode==='carousel'){
     if(!pendingCarouselFiles.length){showToast('캐러셀 이미지를 선택해주세요','error');return;}
-    const slides=pendingCarouselFiles.map(f=>({id:uid('s'),src:URL.createObjectURL(f),mimeType:f.type,fileName:f.name,_file:f}));
+    const slides=pendingCarouselFiles.map(f=>{
+      const sid=uid('s');
+      const localBlobKey=`slide:${sid}`;
+      saveLocalBlob(localBlobKey,f,{fileName:f.name,mimeType:f.type}).catch(console.warn);
+      return {id:sid,src:URL.createObjectURL(f),previewSrc:URL.createObjectURL(f),mimeType:f.type,fileName:f.name,localBlobKey,_file:f};
+    });
     items.push(normalizeItem({...base,type:'carousel',carousel:slides}));
   }else if(pendingFile){ items.push(fileToItem(pendingFile,base)); }
   else if(url){ items.push(normalizeItem({...base,src:url,type:guessType(url)})); }
@@ -949,6 +1134,103 @@ function installReliablePasteListener(){
   },true);
 }
 
+// ─── Download Helpers ───
+function isDownloadableItem(it){
+  if(!it) return false;
+  if(it.type==='image'||it.type==='video') return true;
+  if(it.type==='carousel') return Array.isArray(it.carousel) && it.carousel.length>0;
+  return false;
+}
+
+function safeFileName(name='refboard-media'){
+  return String(name||'refboard-media').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim().slice(0,120)||'refboard-media';
+}
+
+function extFromMime(mime='',fallback='png'){
+  const m=String(mime||'').toLowerCase();
+  if(m.includes('jpeg')) return 'jpg';
+  if(m.includes('png')) return 'png';
+  if(m.includes('webp')) return 'webp';
+  if(m.includes('gif')) return 'gif';
+  if(m.includes('svg')) return 'svg';
+  if(m.includes('mp4')) return 'mp4';
+  if(m.includes('webm')) return 'webm';
+  if(m.includes('quicktime')) return 'mov';
+  return fallback;
+}
+
+function ensureFileExt(name,media){
+  const current=safeFileName(name||media.fileName||media.title||'refboard-media');
+  if(/\.[a-z0-9]{2,5}$/i.test(current)) return current;
+  return `${current}.${extFromMime(media.mimeType,media.type==='video'?'mp4':'png')}`;
+}
+
+async function blobFromMedia(media){
+  if(!media) return null;
+  if(media._file) return media._file;
+  if(media.localBlobKey){
+    const local=await getLocalBlob(media.localBlobKey);
+    if(local) return local;
+  }
+  if(media.driveFileId) return await getDriveBlob(media.driveFileId,media.mimeType);
+  if(media.src && String(media.src).startsWith('blob:')) return await (await fetch(media.src)).blob();
+  if(media.src && String(media.src).startsWith('data:')) return await (await fetch(media.src)).blob();
+  if(media.src && /^https?:\/\//.test(media.src)){
+    try{
+      const res=await fetch(media.src,{mode:'cors'});
+      if(res.ok) return await res.blob();
+    }catch(e){ console.warn('외부 URL blob 다운로드 실패:', e); }
+  }
+  return null;
+}
+
+function triggerDownload(blobOrUrl,filename){
+  const a=document.createElement('a');
+  let href=blobOrUrl;
+  if(blobOrUrl instanceof Blob) href=URL.createObjectURL(blobOrUrl);
+  a.href=href;
+  a.download=filename;
+  a.rel='noopener';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{
+    a.remove();
+    if(blobOrUrl instanceof Blob) URL.revokeObjectURL(href);
+  },700);
+}
+
+async function downloadMediaTarget(media,filename){
+  const name=ensureFileExt(filename,media);
+  const blob=await blobFromMedia(media);
+  if(blob){ triggerDownload(blob,name); return true; }
+  if(media?.src){
+    triggerDownload(media.src,name);
+    return true;
+  }
+  return false;
+}
+
+async function downloadItemMedia(id){
+  const it=items.find(i=>i.id===id);
+  if(!it){ showToast('다운로드할 항목을 찾지 못했어요','error'); return; }
+  try{
+    if(it.type==='carousel'){
+      const slides=(it.carousel||[]).filter(Boolean);
+      if(!slides.length){ showToast('다운로드할 캐러셀 이미지가 없어요','error'); return; }
+      let done=0;
+      for(let idx=0; idx<slides.length; idx++){
+        const s=slides[idx];
+        const base=`${safeFileName(it.title||'carousel')}_${String(idx+1).padStart(2,'0')}_${safeFileName(s.fileName||s.title||'slide')}`;
+        if(await downloadMediaTarget(s,base)) done++;
+      }
+      showToast(`${done}개 다운로드 시작`,'success');
+      return;
+    }
+    const ok=await downloadMediaTarget(it,it.fileName||it.title||'refboard-media');
+    showToast(ok?'다운로드 시작':'다운로드할 미디어가 없어요',ok?'success':'error');
+  }catch(e){ console.error(e); showToast('다운로드 실패: Drive 연결 또는 외부 URL 권한을 확인해주세요','error'); }
+}
+
 // ─── Detail View ───
 function carouselThumbStrip(it){
   if(!Array.isArray(it.carousel)||!it.carousel.length) return '<div class="detail-helper">캐러셀 슬라이드가 없습니다.</div>';
@@ -995,6 +1277,7 @@ function renderDetail(){
     <div class="form-row"><label class="form-label">일반 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="3">${esc(it.notes||'')}</textarea></div>
     <div class="detail-actions">
       <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
+      ${isDownloadableItem(it)?'<button class="detail-btn" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}
       <button class="detail-btn" onclick="renderDetail()">되돌리기</button>
       <button class="detail-btn" style="color:var(--red)" onclick="deleteItem(selectedId)">삭제</button>
     </div>
