@@ -1051,3 +1051,79 @@ body.ai-panel-open #ai-side-handle{
 }
 .card-media.media-error::after{content:'이미지를 불러오지 못했어요';}
 @keyframes mediaSkeleton{0%{background-position:100% 0;}100%{background-position:0 0;}}
+
+
+/* v38 speed patch: compact card grid + faster first-screen paint */
+#board-wrap{
+  padding:12px;
+}
+#board{
+  gap:10px;
+}
+#board.grid-view{
+  grid-template-columns:repeat(auto-fill,minmax(136px,1fr));
+}
+.ref-card{
+  border-radius:12px;
+  overflow:hidden;
+  contain:layout paint style;
+}
+.card-media,
+.card-video-thumb{
+  aspect-ratio:1/1;
+  background:var(--s3);
+}
+.card-info{
+  padding:7px 9px;
+}
+.card-title{
+  font-size:10.5px;
+  line-height:1.35;
+  margin-bottom:4px;
+}
+.card-cats{
+  gap:2px;
+  margin-bottom:3px;
+}
+.card-cat-tag{
+  font-size:8.5px;
+  padding:1px 5px;
+}
+.card-date{
+  font-size:8.5px;
+}
+.card-type-badge{
+  top:6px;
+  right:6px;
+  font-size:8px;
+  padding:2px 6px;
+}
+.card-delete{
+  top:6px;
+  left:6px;
+  width:20px;
+  height:20px;
+  font-size:10px;
+}
+.card-download{
+  top:30px;
+  left:6px;
+  width:20px;
+  height:20px;
+  font-size:12px;
+}
+#board.list-view .card-media,
+#board.list-view .card-video-thumb,
+#board.list-view .carousel-thumb{
+  width:58px;
+  height:58px;
+}
+#board.list-view .card-info{
+  padding:8px 8px 8px 0;
+}
+@media(max-width:768px){
+  #board-wrap{padding:10px;}
+  #board{gap:8px;}
+  #board.grid-view{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));}
+  .card-info{padding:6px 8px;}
+}

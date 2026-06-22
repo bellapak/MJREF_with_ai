@@ -45,7 +45,10 @@ let driveBlobPromiseCache=new Map();
 let localBlobDbPromise=null;
 let driveFetchActive=0;
 let driveFetchQueue=[];
-const DRIVE_FETCH_CONCURRENCY=4;
+const DRIVE_FETCH_CONCURRENCY=8;
+const CARD_THUMB_SIZE=220;
+const PRIORITY_CARD_COUNT=24;
+const DRIVE_THUMB_CACHE_PREFIX='drive-thumb:';
 const LOCAL_MEDIA_DB_NAME='refboard-local-media-v1';
 const LOCAL_MEDIA_STORE_NAME='media';
 let state={items:[]};
@@ -445,9 +448,11 @@ function runDriveFetchQueue(){
   }
 }
 
-function enqueueDriveJob(task){
+function enqueueDriveJob(task, priority=false){
   return new Promise((resolve,reject)=>{
-    driveFetchQueue.push({task,resolve,reject});
+    const job={task,resolve,reject};
+    if(priority) driveFetchQueue.unshift(job);
+    else driveFetchQueue.push(job);
     runDriveFetchQueue();
   });
 }
@@ -458,7 +463,7 @@ async function fetchDriveMediaBlobRaw(fileId,mimeType=''){
   return blob.type ? blob : new Blob([blob],{type:mimeType||'application/octet-stream'});
 }
 
-async function getDriveBlob(fileId,mimeType=''){
+async function getDriveBlob(fileId,mimeType='',priority=false){
   if(!fileId) return null;
   if(objectBlobCache.has(fileId)) return objectBlobCache.get(fileId);
   if(driveBlobPromiseCache.has(fileId)) return driveBlobPromiseCache.get(fileId);
@@ -466,17 +471,17 @@ async function getDriveBlob(fileId,mimeType=''){
     const blob=await fetchDriveMediaBlobRaw(fileId,mimeType);
     objectBlobCache.set(fileId,blob);
     return blob;
-  }).finally(()=>driveBlobPromiseCache.delete(fileId));
+  }, priority).finally(()=>driveBlobPromiseCache.delete(fileId));
   driveBlobPromiseCache.set(fileId,promise);
   return promise;
 }
 
-async function getDriveObjectURL(fileId,mimeType=''){
+async function getDriveObjectURL(fileId,mimeType='',priority=false){
   if(!fileId) return '';
   const cacheKey='drive:'+fileId;
   if(objectUrlCache.has(cacheKey)) return objectUrlCache.get(cacheKey);
   if(objectUrlPromiseCache.has(cacheKey)) return objectUrlPromiseCache.get(cacheKey);
-  const promise=getDriveBlob(fileId,mimeType).then(blob=>{
+  const promise=getDriveBlob(fileId,mimeType,priority).then(blob=>{
     if(!blob) return '';
     const url=URL.createObjectURL(blob);
     objectUrlCache.set(cacheKey,url);
@@ -486,39 +491,111 @@ async function getDriveObjectURL(fileId,mimeType=''){
   return promise;
 }
 
-async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink=''){
+
+function optimizeDriveThumbnailLink(thumbnailLink='', size=CARD_THUMB_SIZE){
+  if(!thumbnailLink) return '';
+  let url=String(thumbnailLink);
+  // Google Drive thumbnailLink often ends with =s220. Force a small card-sized image.
+  if(/[?&]sz=/.test(url)) return url.replace(/([?&]sz=)w?\d+/,'$1w'+size);
+  if(/=s\d+(-c)?(?:$|&)/.test(url)) return url.replace(/=s\d+(-c)?/, '=s'+size);
+  if(/=w\d+/.test(url)) return url.replace(/=w\d+/, '=w'+size);
+  return url + (url.includes('=') ? '' : '=s'+size);
+}
+
+function setMediaLoaded(el){
+  if(!el) return;
+  el.classList.remove('media-loading');
+  el.classList.add('media-ready');
+}
+
+function setMediaLoadError(el){
+  if(!el) return;
+  el.classList.remove('media-loading');
+  el.classList.add('media-error');
+}
+
+function tuneCardImageElement(img, priority=false){
+  if(!img) return;
+  img.loading = priority ? 'eager' : 'lazy';
+  img.decoding = 'async';
+  img.fetchPriority = priority ? 'high' : 'low';
+  img.width = CARD_THUMB_SIZE;
+  img.height = CARD_THUMB_SIZE;
+  img.sizes = '(max-width: 720px) 42vw, 150px';
+  img.onload = () => setMediaLoaded(img);
+  img.onerror = () => setMediaLoadError(img);
+}
+
+async function getPersistedDriveThumbURL(fileId){
   if(!fileId) return '';
-  const cacheKey='thumb:'+fileId;
+  return await getLocalBlobObjectURL(DRIVE_THUMB_CACHE_PREFIX + fileId);
+}
+
+async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink='',priority=false){
+  if(!fileId) return '';
+  const cacheKey='thumb:'+fileId+':s'+CARD_THUMB_SIZE;
   if(objectUrlCache.has(cacheKey)) return objectUrlCache.get(cacheKey);
   if(thumbUrlPromiseCache.has(cacheKey)) return thumbUrlPromiseCache.get(cacheKey);
 
-  const promise=enqueueDriveJob(async()=>{
-    if(thumbnailLink){
-      try{
-        const token=await ensureDriveToken();
-        const res=await fetch(thumbnailLink,{headers:{Authorization:`Bearer ${token}`}});
-        if(res.ok){
-          const blob=await res.blob();
-          if(blob && blob.size){
-            const url=URL.createObjectURL(blob);
-            objectUrlCache.set(cacheKey,url);
-            return url;
-          }
-        }
-      }catch(e){
-        console.warn('Drive thumbnail fallback to media:', e);
-      }
+  const promise=(async()=>{
+    // 1) 이전 세션에서 저장된 작은 썸네일부터 확인 → 재접속 시 즉시 표시
+    const persisted=await getPersistedDriveThumbURL(fileId);
+    if(persisted){
+      objectUrlCache.set(cacheKey,persisted);
+      return persisted;
     }
-    const blob=await fetchDriveMediaBlobRaw(fileId,mimeType);
-    objectBlobCache.set(fileId,blob);
-    const url=URL.createObjectURL(blob);
-    objectUrlCache.set(cacheKey,url);
-    objectUrlCache.set('drive:'+fileId,url);
-    return url;
-  }).finally(()=>thumbUrlPromiseCache.delete(cacheKey));
+
+    // 2) Drive thumbnailLink를 카드 크기에 맞게 축소해서 요청
+    return enqueueDriveJob(async()=>{
+      const smallThumb=optimizeDriveThumbnailLink(thumbnailLink, CARD_THUMB_SIZE);
+      if(smallThumb){
+        try{
+          const token=await ensureDriveToken();
+          const res=await fetch(smallThumb,{headers:{Authorization:`Bearer ${token}`}});
+          if(res.ok){
+            const blob=await res.blob();
+            if(blob && blob.size){
+              const url=URL.createObjectURL(blob);
+              objectUrlCache.set(cacheKey,url);
+              // 다음에 켰을 때 바로 보이도록 작은 썸네일만 IndexedDB에 저장
+              saveLocalBlob(DRIVE_THUMB_CACHE_PREFIX + fileId, blob, {fileId, mimeType, thumbSize:CARD_THUMB_SIZE}).catch(()=>{});
+              return url;
+            }
+          }
+        }catch(e){
+          console.warn('Drive thumbnail fallback to media:', e);
+        }
+      }
+
+      // 3) 썸네일이 없는 예외 케이스만 원본으로 fallback
+      const blob=await fetchDriveMediaBlobRaw(fileId,mimeType);
+      objectBlobCache.set(fileId,blob);
+      const url=URL.createObjectURL(blob);
+      objectUrlCache.set(cacheKey,url);
+      objectUrlCache.set('drive:'+fileId,url);
+      return url;
+    }, priority);
+  })().finally(()=>thumbUrlPromiseCache.delete(cacheKey));
 
   thumbUrlPromiseCache.set(cacheKey,promise);
   return promise;
+}
+
+function loadDriveImageElement(img, priority=false){
+  const fileId = img?.dataset?.driveId;
+  if(!fileId) return Promise.resolve('');
+  img.classList.add('media-loading');
+  return getDriveThumbnailObjectURL(fileId, img.dataset.mimeType || '', img.dataset.driveThumb || '', priority)
+    .then(url => {
+      if(url && img.src !== url) img.src = url;
+      return url;
+    })
+    .catch(err => {
+      console.warn('Drive image load failed:', err);
+      setMediaLoadError(img);
+      return '';
+    })
+    .finally(()=>img.classList.remove('media-loading'));
 }
 
 function openLocalBlobDb(){
@@ -588,22 +665,13 @@ const driveImageObserver = new IntersectionObserver((entries, observer) => {
   entries.forEach(entry => {
     if(entry.isIntersecting){
       const img = entry.target;
-      const fileId = img.dataset.driveId;
-      const mimeType = img.dataset.mimeType;
-      const thumb = img.dataset.driveThumb || '';
-      if(fileId){
+      if(img?.dataset?.driveId){
         observer.unobserve(img);
-        img.classList.add('media-loading');
-        getDriveThumbnailObjectURL(fileId, mimeType, thumb).then(url => {
-          if(url) img.src = url;
-        }).catch(err => {
-          console.warn('Drive image lazy load failed:', err);
-          img.classList.add('media-error');
-        }).finally(()=>img.classList.remove('media-loading'));
+        loadDriveImageElement(img, false);
       }
     }
   });
-}, { rootMargin: '700px', threshold: 0.01 });
+}, { rootMargin: '220px', threshold: 0.01 });
 
 // 외부 URL 이미지용 lazy observer — src 세팅 자체를 뷰포트 진입 시점까지 지연
 const srcLazyObserver = new IntersectionObserver((entries, observer) => {
@@ -622,14 +690,14 @@ const srcLazyObserver = new IntersectionObserver((entries, observer) => {
           img.dataset.driveId = lazyFallbackId;
           img.dataset.mimeType = lazyFallbackMime || '';
           img.dataset.driveThumb = lazyFallbackThumb;
-          driveImageObserver.observe(img);
-        } : () => { img.classList.add('media-error'); img.classList.remove('media-loading'); };
-        img.onload = () => img.classList.remove('media-loading');
+          loadDriveImageElement(img, false);
+        } : () => setMediaLoadError(img);
+        img.onload = () => setMediaLoaded(img);
         img.src = lazySrc;
       }
     }
   });
-}, { rootMargin: '700px', threshold: 0.01 });
+}, { rootMargin: '220px', threshold: 0.01 });
 
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
@@ -733,10 +801,17 @@ async function deleteItem(id){
 }
 
 // ─── Media Binding (Lazy Loaded) ───
-function bindRemoteCardMedia(el,it,placeholder=''){
+function bindRemoteCardMedia(el,it,placeholder='',priority=false){
   if(it.src && !it.driveFileId){
-    el.dataset.lazySrc = it.src;
-    srcLazyObserver.observe(el);
+    if(priority){
+      el.classList.add('media-loading');
+      el.onerror = () => setMediaLoadError(el);
+      el.onload = () => setMediaLoaded(el);
+      el.src = it.src;
+    }else{
+      el.dataset.lazySrc = it.src;
+      srcLazyObserver.observe(el);
+    }
     return;
   }
 
@@ -752,7 +827,8 @@ function bindRemoteCardMedia(el,it,placeholder=''){
       el.dataset.driveId = it.driveFileId;
       el.dataset.mimeType = it.mimeType || '';
       el.dataset.driveThumb = it.thumbnailLink || '';
-      driveImageObserver.observe(el);
+      if(priority) loadDriveImageElement(el, true);
+      else driveImageObserver.observe(el);
       return;
     }
   }
@@ -760,19 +836,20 @@ function bindRemoteCardMedia(el,it,placeholder=''){
   if(placeholder) el.src=placeholder;
 }
 
-function bindCardMedia(el,it,placeholder=''){
+function bindCardMedia(el,it,placeholder='',priority=false){
   if(!it){ if(placeholder) el.src=placeholder; return; }
-  if(it.previewSrc){ el.src=it.previewSrc; return; }
-  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; return; }
+  if(it.previewSrc){ el.src=it.previewSrc; setMediaLoaded(el); return; }
+  if(it.src && String(it.src).startsWith('blob:')){ el.src=it.src; setMediaLoaded(el); return; }
 
   if(it.localBlobKey){
+    el.classList.add('media-loading');
     getLocalBlobObjectURL(it.localBlobKey)
-      .then(url=>{ if(url) el.src=url; else bindRemoteCardMedia(el,it,placeholder); })
-      .catch(()=>bindRemoteCardMedia(el,it,placeholder));
+      .then(url=>{ if(url){ el.src=url; setMediaLoaded(el); } else bindRemoteCardMedia(el,it,placeholder,priority); })
+      .catch(()=>bindRemoteCardMedia(el,it,placeholder,priority));
     return;
   }
 
-  bindRemoteCardMedia(el,it,placeholder);
+  bindRemoteCardMedia(el,it,placeholder,priority);
 }
 
 function bindDriveMedia(el,it,placeholder=''){
@@ -791,7 +868,7 @@ function bindDriveMedia(el,it,placeholder=''){
 function bindDriveMediaRemote(el,it,placeholder=''){
   if(it.driveFileId){
     el.classList.add('media-loading');
-    getDriveObjectURL(it.driveFileId,it.mimeType)
+    getDriveObjectURL(it.driveFileId,it.mimeType,true)
       .then(u=>{ if(u) el.src=u; })
       .catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; })
       .finally(()=>el.classList.remove('media-loading'));
@@ -843,7 +920,8 @@ function pasteBarNode(){
   return div;
 }
 
-function cardNode(it){
+function cardNode(it,index=0){
+  const isPriority = currentView==='list' ? index < 14 : index < PRIORITY_CARD_COUNT;
   const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
   if(isDownloadableItem(it)){
@@ -855,15 +933,15 @@ function cardNode(it){
   
   let media = null;
   if(it.type==='video'){
-    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); 
+    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it,'',isPriority); 
     media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){} } media.play().catch(()=>{}); }; 
     media.onmouseleave=()=>{media.pause(); if(media.currentTime) media.currentTime=0;};
   }else if(it.type==='carousel'){
-    const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,firstSlide); media.alt=it.title;
+    const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; tuneCardImageElement(media,isPriority); bindCardMedia(media,firstSlide,'',isPriority); media.alt=it.title;
   }else if(it.type==='link'){
     // 링크 타입의 경우 썸네일 칸을 아예 생성하지 않음
   }else{
-    media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,it); media.alt=it.title;
+    media=document.createElement('img'); media.className='card-media'; tuneCardImageElement(media,isPriority); bindCardMedia(media,it,'',isPriority); media.alt=it.title;
   }
   
   if(media) { card.appendChild(media); }
@@ -909,10 +987,10 @@ function renderBoard(){
     return; 
   }
   
-  const chunkSize=currentView==='list'?80:40; 
+  const chunkSize=currentView==='list'?60:28; 
   let idx=0;
   const end=Math.min(idx+chunkSize, arr.length);
-  for(; idx<end; idx++) frag.appendChild(cardNode(arr[idx]));
+  for(; idx<end; idx++) frag.appendChild(cardNode(arr[idx], idx));
   
   board.innerHTML='';
   board.className=currentView+'-view';
@@ -923,7 +1001,7 @@ function renderBoard(){
     if(idx>=arr.length) return;
     const subFrag=document.createDocumentFragment();
     const subEnd=Math.min(idx+chunkSize, arr.length);
-    for(; idx<subEnd; idx++) subFrag.appendChild(cardNode(arr[idx]));
+    for(; idx<subEnd; idx++) subFrag.appendChild(cardNode(arr[idx], idx));
     board.appendChild(subFrag);
     if(idx<arr.length) requestAnimationFrame(paintRemaining);
   }
