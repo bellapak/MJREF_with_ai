@@ -1,5 +1,5 @@
 // =====================================================
-// refboard - app.js (Data Loss Fixed & Performance Optimized)
+// refboard - app.js (Data Loss Fixed & Performance Optimized & Link UI Updated)
 // =====================================================
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
@@ -852,7 +852,8 @@ function cardNode(it){
     dl.onclick=(e)=>{e.stopPropagation(); downloadItemMedia(it.id);};
     card.appendChild(dl);
   }
-  let media;
+  
+  let media = null;
   if(it.type==='video'){
     media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it); 
     media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){} } media.play().catch(()=>{}); }; 
@@ -860,11 +861,13 @@ function cardNode(it){
   }else if(it.type==='carousel'){
     const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,firstSlide); media.alt=it.title;
   }else if(it.type==='link'){
-    media=document.createElement('div'); media.className='card-video-thumb'; media.innerHTML='<div style="font-size:34px;color:var(--t3)">↗</div>';
+    // 링크 타입의 경우 썸네일 칸을 아예 생성하지 않음
   }else{
     media=document.createElement('img'); media.className='card-media'; media.loading='lazy'; bindCardMedia(media,it); media.alt=it.title;
   }
-  card.appendChild(media);
+  
+  if(media) { card.appendChild(media); }
+
   const info=document.createElement('div'); info.className='card-info';
   const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
   info.innerHTML=`<div class="card-title">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
@@ -1259,7 +1262,7 @@ function renderDetail(){
   let el;
   if(it.type==='video'){ el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it); m.appendChild(el); }
   else if(it.type==='carousel'){ const first=it.carousel?.[0]; if(first){ el=document.createElement((first.mimeType||'').startsWith('video/')?'video':'img'); if(el.tagName==='VIDEO') el.controls=true; bindDriveMedia(el,first); m.appendChild(el); } }
-  else if(it.type==='link'){ el=document.createElement('a'); el.href=it.src||it.sourceUrl; el.target='_blank'; el.textContent='원본 링크 열기'; m.appendChild(el); }
+  else if(it.type==='link'){ /* 미디어 영역 무시 */ }
   else{ el=document.createElement('img'); bindDriveMedia(el,it); m.appendChild(el); }
   
   renderDetailCatOptions();
@@ -1274,6 +1277,15 @@ function renderDetail(){
     <div class="form-row"><label class="form-label">CTA</label><input class="detail-input" id="detail-edit-cta" value="${esc(it.cta||'')}"></div>
     <div class="form-row"><label class="form-label">비주얼 메모</label><textarea class="detail-input" id="detail-edit-visual" rows="3">${esc(it.visualNotes||'')}</textarea></div>
     <div class="form-row"><label class="form-label">콘텐츠 메모</label><textarea class="detail-input" id="detail-edit-content" rows="3">${esc(it.contentNotes||'')}</textarea></div>
+    
+    <div class="form-row">
+      <label class="form-label">링크 첨부</label>
+      <div style="display:flex;gap:6px;">
+        <input class="detail-input" style="flex:1;" id="detail-edit-link" value="${esc(it.sourceUrl || (it.type==='link'?it.src:'') || '')}" placeholder="https:// URL 입력">
+        <button class="detail-btn" style="flex-shrink:0;white-space:nowrap;" onclick="const url=document.getElementById('detail-edit-link').value; if(url) window.open(url, '_blank')">바로가기</button>
+      </div>
+    </div>
+
     <div class="form-row"><label class="form-label">일반 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="3">${esc(it.notes||'')}</textarea></div>
     <div class="detail-actions">
       <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
@@ -1297,6 +1309,12 @@ function saveDetailEdits(){
   it.cta=$('detail-edit-cta')?.value||'';
   it.visualNotes=$('detail-edit-visual')?.value||'';
   it.contentNotes=$('detail-edit-content')?.value||'';
+  
+  it.sourceUrl=$('detail-edit-link')?.value||'';
+  if(it.type === 'link' && it.sourceUrl) { 
+    it.src = it.sourceUrl; 
+  }
+
   it.notes=$('detail-edit-notes')?.value||'';
   saveData(); renderBoard(); renderAiTargets(); renderDetail();
   showToast('수정 저장 완료','success');
