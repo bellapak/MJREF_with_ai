@@ -45,9 +45,9 @@ let driveBlobPromiseCache=new Map();
 let localBlobDbPromise=null;
 let driveFetchActive=0;
 let driveFetchQueue=[];
-const DRIVE_FETCH_CONCURRENCY=8;
+const DRIVE_FETCH_CONCURRENCY=16;
 const CARD_THUMB_SIZE=220;
-const PRIORITY_CARD_COUNT=24;
+const PRIORITY_CARD_COUNT=40;
 const DRIVE_THUMB_CACHE_PREFIX='drive-thumb:';
 const LOCAL_MEDIA_DB_NAME='refboard-local-media-v1';
 const LOCAL_MEDIA_STORE_NAME='media';
@@ -671,7 +671,7 @@ const driveImageObserver = new IntersectionObserver((entries, observer) => {
       }
     }
   });
-}, { rootMargin: '220px', threshold: 0.01 });
+}, { rootMargin: '600px', threshold: 0.01 });
 
 // 외부 URL 이미지용 lazy observer — src 세팅 자체를 뷰포트 진입 시점까지 지연
 const srcLazyObserver = new IntersectionObserver((entries, observer) => {
@@ -697,7 +697,7 @@ const srcLazyObserver = new IntersectionObserver((entries, observer) => {
       }
     }
   });
-}, { rootMargin: '220px', threshold: 0.01 });
+}, { rootMargin: '600px', threshold: 0.01 });
 
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
@@ -920,6 +920,32 @@ function pasteBarNode(){
   return div;
 }
 
+// ─── Inline Title Edit ───
+function startInlineTitleEdit(id, titleEl){
+  const it=items.find(i=>i.id===id); if(!it) return;
+  const input=document.createElement('input');
+  input.className='card-title-input';
+  input.value=it.title;
+  titleEl.replaceWith(input);
+  input.focus(); input.select();
+  let saved=false;
+  const save=()=>{
+    if(saved) return; saved=true;
+    const newTitle=input.value.trim()||'제목없음';
+    it.title=newTitle;
+    const newEl=document.createElement('div');
+    newEl.className='card-title'; newEl.title='더블클릭으로 제목 수정';
+    newEl.textContent=newTitle;
+    newEl.ondblclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(id,newEl); };
+    input.replaceWith(newEl);
+    saveData();
+    if(selectedId===id) $('detail-edit-title') && ($('detail-edit-title').value=newTitle);
+  };
+  input.onkeydown=(e)=>{ if(e.key==='Enter'){e.preventDefault();save();} if(e.key==='Escape'){saved=true;input.replaceWith(titleEl);} };
+  input.onblur=save;
+  input.onclick=(e)=>e.stopPropagation();
+}
+
 function cardNode(it,index=0){
   const isPriority = currentView==='list' ? index < 14 : index < PRIORITY_CARD_COUNT;
   const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
@@ -948,7 +974,9 @@ function cardNode(it,index=0){
 
   const info=document.createElement('div'); info.className='card-info';
   const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
-  info.innerHTML=`<div class="card-title">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
+  info.innerHTML=`<div class="card-title" title="더블클릭으로 제목 수정">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
+  const titleEl=info.querySelector('.card-title');
+  titleEl.ondblclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
   card.appendChild(info);
   
   const badge=document.createElement('div'); badge.className='card-type-badge'; 
@@ -1376,6 +1404,9 @@ function renderDetail(){
     <div class="detail-field"><div class="detail-key">DRIVE FILE ID</div><div class="detail-val">${esc(it.driveFileId||'-')}</div></div>
   `;
   mountCarouselDetailMedia(it);
+  // 제목 입력 필드에서 엔터 → 저장
+  const titleInp=$('detail-edit-title');
+  if(titleInp) titleInp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();saveDetailEdits();} });
 }
 
 function saveDetailEdits(){

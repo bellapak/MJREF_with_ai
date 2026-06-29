@@ -1127,3 +1127,21 @@ body.ai-panel-open #ai-side-handle{
   #board.grid-view{grid-template-columns:repeat(auto-fill,minmax(118px,1fr));}
   .card-info{padding:6px 8px;}
 }
+
+/* 카드 인라인 제목 편집 */
+.card-title{cursor:default;}
+.card-title:hover{color:var(--t1);}
+.card-title-input{
+  width:100%;
+  background:var(--s4);
+  border:1px solid var(--accent);
+  border-radius:4px;
+  color:var(--t1);
+  font-family:var(--fn);
+  font-size:10.5px;
+  line-height:1.35;
+  margin-bottom:4px;
+  padding:2px 5px;
+  outline:none;
+  box-shadow:0 0 0 2px rgba(10,132,255,0.2);
+}
