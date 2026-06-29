@@ -923,25 +923,30 @@ function pasteBarNode(){
 // ─── Inline Title Edit ───
 function startInlineTitleEdit(id, titleEl){
   const it=items.find(i=>i.id===id); if(!it) return;
+  const wrap=titleEl.parentElement;
+  const editBtn=wrap?.querySelector('.card-title-edit-btn');
+  if(editBtn) editBtn.style.display='none';
   const input=document.createElement('input');
   input.className='card-title-input';
   input.value=it.title;
   titleEl.replaceWith(input);
   input.focus(); input.select();
   let saved=false;
+  const restore=(newTitle)=>{
+    const newEl=document.createElement('div'); newEl.className='card-title'; newEl.textContent=newTitle||it.title;
+    input.replaceWith(newEl);
+    if(editBtn){ editBtn.style.display=''; editBtn.onclick=(e)=>{e.stopPropagation();startInlineTitleEdit(id,newEl);}; }
+    if(selectedId===id && $('detail-edit-title')) $('detail-edit-title').value=newEl.textContent;
+  };
   const save=()=>{
     if(saved) return; saved=true;
     const newTitle=input.value.trim()||'제목없음';
-    it.title=newTitle;
-    const newEl=document.createElement('div');
-    newEl.className='card-title'; newEl.title='더블클릭으로 제목 수정';
-    newEl.textContent=newTitle;
-    newEl.ondblclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(id,newEl); };
-    input.replaceWith(newEl);
-    saveData();
-    if(selectedId===id) $('detail-edit-title') && ($('detail-edit-title').value=newTitle);
+    it.title=newTitle; restore(newTitle); saveData();
   };
-  input.onkeydown=(e)=>{ if(e.key==='Enter'){e.preventDefault();save();} if(e.key==='Escape'){saved=true;input.replaceWith(titleEl);} };
+  input.onkeydown=(e)=>{
+    if(e.key==='Enter'){e.preventDefault();save();}
+    if(e.key==='Escape'){saved=true; if(editBtn){editBtn.style.display='';editBtn.onclick=(e2)=>{e2.stopPropagation();startInlineTitleEdit(id,titleEl);};} input.replaceWith(titleEl);}
+  };
   input.onblur=save;
   input.onclick=(e)=>e.stopPropagation();
 }
@@ -974,9 +979,10 @@ function cardNode(it,index=0){
 
   const info=document.createElement('div'); info.className='card-info';
   const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
-  info.innerHTML=`<div class="card-title" title="더블클릭으로 제목 수정">${esc(it.title)}</div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
+  info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
-  titleEl.ondblclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
+  const editBtn=info.querySelector('.card-title-edit-btn');
+  editBtn.onclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
   card.appendChild(info);
   
   const badge=document.createElement('div'); badge.className='card-type-badge'; 
@@ -1058,11 +1064,42 @@ function groupByCategories(){
   return {map,ungrouped};
 }
 
+// ─── Category / Group Inline Edit ───
+function _buildInlineEditForm(name, color, onSave, onCancel){
+  const form=document.createElement('div'); form.className='cat-edit-form inline-cat-edit-form';
+  form.innerHTML=`<input class="ief-name" value="${esc(name)}" maxlength="24" placeholder="이름"><div class="color-swatch-row ief-colors">${CAT_COLORS.map(c=>`<span class="color-swatch${color===c?' selected':''}" style="background:${c}" data-color="${c}"></span>`).join('')}</div><div class="edit-actions"><button class="cedit-save">저장</button><button class="cedit-cancel">취소</button></div>`;
+  let sel=color;
+  form.querySelectorAll('.ief-colors .color-swatch').forEach(sw=>sw.onclick=()=>{ form.querySelectorAll('.ief-colors .color-swatch').forEach(s=>s.classList.remove('selected')); sw.classList.add('selected'); sel=sw.dataset.color; });
+  form.querySelector('.cedit-save').onclick=()=>{ const n=form.querySelector('.ief-name').value.trim(); if(!n) return; onSave(n,sel); };
+  form.querySelector('.cedit-cancel').onclick=()=>{ form.remove(); onCancel&&onCancel(); };
+  form.querySelector('.ief-name').addEventListener('keydown',e=>{ if(e.key==='Enter'){form.querySelector('.cedit-save').click();} if(e.key==='Escape'){form.remove(); onCancel&&onCancel();} });
+  return form;
+}
+
+function showGroupEditInline(gid, triggerEl){
+  document.querySelectorAll('.inline-cat-edit-form').forEach(el=>el.remove());
+  const g=groups.find(x=>x.id===gid); if(!g) return;
+  const form=_buildInlineEditForm(g.name, g.color||CAT_COLORS[0], (n,col)=>{ g.name=n; g.color=col; form.remove(); saveData(); renderAll(); }, null);
+  form.dataset.for=gid;
+  triggerEl.closest('.group-header').insertAdjacentElement('afterend', form);
+  form.querySelector('.ief-name').focus(); form.querySelector('.ief-name').select();
+}
+
+function showCatEditInline(cid, triggerEl){
+  document.querySelectorAll('.inline-cat-edit-form').forEach(el=>el.remove());
+  const c=categories.find(x=>x.id===cid); if(!c) return;
+  const form=_buildInlineEditForm(c.name, c.color||CAT_COLORS[0], (n,col)=>{ c.name=n; c.color=col; form.remove(); saveData(); renderAll(); }, null);
+  form.dataset.for=cid;
+  triggerEl.closest('.cat-row').insertAdjacentElement('afterend', form);
+  form.querySelector('.ief-name').focus(); form.querySelector('.ief-name').select();
+}
+
 function categoryRowNode(c){
   const row=document.createElement('div'); row.className='cat-row';
   const cnt=items.filter(i=>i.catIds?.includes(c.id)).length;
-  row.innerHTML=`<button class="cat-filter-btn ${currentCatFilter===c.id?'active':''}"><span class="dot" style="background:${c.color}"></span><span class="cat-name">${esc(c.name)}</span><span class="cnt">${cnt}</span></button><button class="cat-edit-btn" title="소분류 삭제">×</button>`;
+  row.innerHTML=`<button class="cat-filter-btn ${currentCatFilter===c.id?'active':''}"><span class="dot" style="background:${c.color}"></span><span class="cat-name">${esc(c.name)}</span><span class="cnt">${cnt}</span></button><button class="cat-rename-btn" title="이름·색상 수정">✎</button><button class="cat-edit-btn" title="소분류 삭제">×</button>`;
   row.querySelector('.cat-filter-btn').onclick=()=>{ currentCatFilter=c.id; currentFilter='all'; document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.remove('active')); document.querySelector('.sb-btn[data-filter="all"]')?.classList.add('active'); renderCategories(); renderBoard(); };
+  row.querySelector('.cat-rename-btn').onclick=(e)=>{ e.stopPropagation(); showCatEditInline(c.id, e.currentTarget); };
   row.querySelector('.cat-edit-btn').onclick=(e)=>{ e.stopPropagation(); if(confirm('소분류를 삭제할까요?')){ categories=categories.filter(x=>x.id!==c.id); items.forEach(i=>i.catIds=(i.catIds||[]).filter(id=>id!==c.id)); saveData(); renderAll(); } };
   return row;
 }
@@ -1075,11 +1112,12 @@ function renderCategories(){
     const cats=map.get(g.id)||[]; const open=!collapsedGroups.has(g.id);
     const block=document.createElement('div'); block.className='group-block';
     const cnt=cats.reduce((sum,c)=>sum+items.filter(i=>i.catIds?.includes(c.id)).length,0);
-    block.innerHTML=`<div class="group-header" data-gid="${g.id}"><span class="group-toggle ${open?'open':''}">▶</span><span class="group-title-line" style="background:${g.color||'var(--accent)'}"></span><span class="group-name" style="color:${g.color||'var(--t1)'}">${esc(g.name)}</span><span class="group-cnt">${cnt}</span><button class="group-edit-btn" title="대분류 삭제">×</button></div>`;
+    block.innerHTML=`<div class="group-header" data-gid="${g.id}"><span class="group-toggle ${open?'open':''}">▶</span><span class="group-title-line" style="background:${g.color||'var(--accent)'}"></span><span class="group-name" style="color:${g.color||'var(--t1)'}">${esc(g.name)}</span><span class="group-cnt">${cnt}</span><button class="group-rename-btn" title="이름·색상 수정">✎</button><button class="group-edit-btn" title="대분류 삭제">×</button></div>`;
     const children=document.createElement('div'); children.className='group-children'+(open?'':' collapsed');
     if(cats.length) cats.forEach(c=>children.appendChild(categoryRowNode(c))); else children.innerHTML='<div style="font-size:11px;color:var(--t4);padding:6px 10px;">소분류 없음</div>';
     block.appendChild(children);
-    block.querySelector('.group-header').onclick=(e)=>{ if(e.target.classList.contains('group-edit-btn')) return; collapsedGroups.has(g.id)?collapsedGroups.delete(g.id):collapsedGroups.add(g.id); persistCollapsedGroups(); renderCategories(); };
+    block.querySelector('.group-header').onclick=(e)=>{ if(e.target.classList.contains('group-edit-btn')||e.target.classList.contains('group-rename-btn')) return; collapsedGroups.has(g.id)?collapsedGroups.delete(g.id):collapsedGroups.add(g.id); persistCollapsedGroups(); renderCategories(); };
+    block.querySelector('.group-rename-btn').onclick=(e)=>{ e.stopPropagation(); showGroupEditInline(g.id, e.currentTarget); };
     block.querySelector('.group-edit-btn').onclick=(e)=>{ e.stopPropagation(); if(confirm('대분류를 삭제할까요? 소분류는 그룹 없음으로 이동합니다.')){ groups=groups.filter(x=>x.id!==g.id); categories.forEach(c=>{ if(getCategoryGroupId(c)===g.id) setCategoryGroupId(c,''); }); saveData(); renderAll(); } };
     list.appendChild(block);
   });
