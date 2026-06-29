@@ -1152,24 +1152,63 @@ function saveNewGroup(){
   $('new-group-name').value=''; hideNewGroupForm(); saveData(); renderAll();
 }
 
-// ─── Modal & File Handling ───
-function buildGroupedCategoryPickerHtml(selectedIds=[], chipClass='cat-option-chip'){
+
+function normalizeCatPickerName(name=''){
+  return String(name).replace(/\s+/g,'').replace(/[·_\-]/g,'/').toLowerCase();
+}
+const CATEGORY_PICKER_FALLBACK_GROUPS=[
+  {key:'format',name:'형식',color:'#3b9eff',cats:['이미지','영상','캐러셀','슬라이드/캐러셀','링크','아티클/링크']},
+  {key:'ad',name:'광고/퍼포먼스',color:'#ff6b35',cats:['Meta 광고','메타광고','YouTube 광고','유튜브광고','쇼핑광고','쇼핑/검색광고','네이버쇼핑/검색광고/기타','TikTok 광고','Tiktok 광고','할인','할인소구']},
+  {key:'content',name:'SNS/콘텐츠',color:'#00d4d4',cats:['인스타그램','Reels/숏폼','릴스/숏폼영상','숏폼','Blog/아티클','블로그/아티클','YouTube 콘텐츠','유튜브콘텐츠','밈/유머코드','밈','리뷰','리뷰/UGC']},
+  {key:'commerce',name:'웹/커머스 UX',color:'#c8f060',cats:['웹사이트 페이지','웹사이트 구조','랜딩페이지','랜딩 페이지','상세페이지','PDP/상세페이지','이벤트프로모션','이벤트 프로모션','이벤트 페이지','쿠폰','쿠폰/혜택 UI']},
+  {key:'campaign',name:'캠페인/프로모션',color:'#ffd23b',cats:['캠페인/프로모션','프로모션','기획전/프로모션','콜라보','바이럴','바이럴/참여형','시즌','시즌/기념일','협찬','협찬/인플루언서','후기']},
+  {key:'visual',name:'비주얼 레퍼런스',color:'#7b5cfa',cats:['비주얼','무드/비주얼','레이아웃','카피','카피/문구','신제품','신제품/패키지']},
+  {key:'shooting',name:'촬영/연출',color:'#ffaa3b',cats:['촬영/구도','촬영/연출','촬영연출','파인/일몰','소품/배경','상황/분위기','상황/무드','제품컷','사용컷','라이프스타일컷','디테일컷']},
+  {key:'offline',name:'오프라인/공간',color:'#00d4d4',cats:['팝업','팝업스토어','오프라인팝업','오프라인/공간','매장진열','부스/전시','포토존','VMD']}
+];
+function findFallbackPickerGroup(cat){
+  const key=normalizeCatPickerName(cat?.name||'');
+  return CATEGORY_PICKER_FALLBACK_GROUPS.find(g=>g.cats.map(normalizeCatPickerName).includes(key))||null;
+}
+function getActualGroupByFallbackName(fg){
+  const fgName=normalizeCatPickerName(fg.name);
+  return groups.find(g=>normalizeCatPickerName(g.name||'')===fgName || normalizeCatPickerName(g.name||'').includes(fgName.split('/')[0]))||null;
+}
+function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
   if(!categories.length) return '<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>';
   const selected=new Set(Array.isArray(selectedIds)?selectedIds:[]);
+  const chip=(c)=>`<span class="cat-option-chip ${selected.has(c.id)?'selected':''}" data-id="${c.id}" style="${selected.has(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`;
   const {map,ungrouped}=groupByCategories();
-  const chip=(c)=>`<span class="${chipClass} ${selected.has(c.id)?'selected':''}" data-id="${c.id}" style="${selected.has(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`;
   const sections=[];
   groups.forEach(g=>{
     const cats=map.get(g.id)||[];
     if(!cats.length) return;
     sections.push(`<div class="cat-picker-group"><div class="cat-picker-group-title"><span class="cat-picker-group-line" style="background:${g.color||'var(--accent)'}"></span>${esc(g.name)}</div><div class="cat-picker-chip-row">${cats.map(chip).join('')}</div></div>`);
   });
-  if(ungrouped.length){
-    sections.push(`<div class="cat-picker-group"><div class="cat-picker-group-title"><span class="cat-picker-group-line" style="background:var(--t3)"></span>그룹 없음</div><div class="cat-picker-chip-row">${ungrouped.map(chip).join('')}</div></div>`);
+  const fallbackBuckets=new Map();
+  const ungroupedLeft=[];
+  ungrouped.forEach(c=>{
+    const fg=findFallbackPickerGroup(c);
+    if(!fg){ ungroupedLeft.push(c); return; }
+    if(!fallbackBuckets.has(fg.key)) fallbackBuckets.set(fg.key,{group:fg,cats:[]});
+    fallbackBuckets.get(fg.key).cats.push(c);
+  });
+  CATEGORY_PICKER_FALLBACK_GROUPS.forEach(fg=>{
+    const bucket=fallbackBuckets.get(fg.key);
+    if(!bucket||!bucket.cats.length) return;
+    const actual=getActualGroupByFallbackName(fg);
+    const title=actual?.name||fg.name;
+    const color=actual?.color||fg.color||'var(--accent)';
+    sections.push(`<div class="cat-picker-group"><div class="cat-picker-group-title"><span class="cat-picker-group-line" style="background:${color}"></span>${esc(title)}</div><div class="cat-picker-chip-row">${bucket.cats.map(chip).join('')}</div></div>`);
+  });
+  if(ungroupedLeft.length){
+    sections.push(`<div class="cat-picker-group"><div class="cat-picker-group-title"><span class="cat-picker-group-line" style="background:var(--t3)"></span>그룹 없음</div><div class="cat-picker-chip-row">${ungroupedLeft.map(chip).join('')}</div></div>`);
   }
   return sections.join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>';
 }
-function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=buildGroupedCategoryPickerHtml(modalSelectedCats,'mcat-chip'); el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
+
+// ─── Modal & File Handling ───
+function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
 function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
@@ -1414,7 +1453,7 @@ function mountCarouselDetailMedia(it){
 
 function openDetail(id){ selectedId=id; renderBoard(); renderDetail(); $('detail-panel')?.classList.add('open'); }
 function closeDetail(){ selectedId=null; $('detail-panel')?.classList.remove('open'); renderBoard(); }
-function renderDetailCatOptions(){ const it=items.find(i=>i.id===selectedId); const el=$('detail-cat-options'); if(!el||!it)return; if(!Array.isArray(it.catIds)) it.catIds=[]; el.innerHTML=buildGroupedCategoryPickerHtml(it.catIds,'cat-option-chip'); el.querySelectorAll('.cat-option-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; it.catIds=it.catIds.includes(id)?it.catIds.filter(x=>x!==id):[...it.catIds,id]; saveData(); renderAll(); renderDetail();}); }
+function renderDetailCatOptions(){ const it=items.find(i=>i.id===selectedId); const el=$('detail-cat-options'); if(!el||!it)return; if(!Array.isArray(it.catIds)) it.catIds=[]; el.innerHTML=buildGroupedDetailCategoryPickerHtml(it.catIds); el.querySelectorAll('.cat-option-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; it.catIds=it.catIds.includes(id)?it.catIds.filter(x=>x!==id):[...it.catIds,id]; saveData(); renderAll(); renderDetail();}); }
 
 function renderDetail(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;

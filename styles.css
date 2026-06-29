@@ -390,6 +390,12 @@ body{background:var(--bg);color:var(--t1);font-family:var(--fn);font-size:13px;-
 .cat-option-chip:hover{border-color:rgba(255,255,255,0.2);color:var(--t1);}
 .cat-option-chip.selected{color:#fff;border-color:transparent;}
 
+.cat-picker-group{padding:8px 0;border-top:1px solid var(--glass-border);}
+.cat-picker-group:first-child{border-top:0;padding-top:0;}
+.cat-picker-group-title{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:10px;font-weight:600;color:var(--t2);letter-spacing:.04em;}
+.cat-picker-group-line{width:10px;height:2px;border-radius:2px;flex-shrink:0;}
+.cat-picker-chip-row{display:flex;flex-wrap:wrap;gap:5px;}
+
 /* ─── AI TAB CONTENT ─── */
 .ai-panel{background:var(--s2);border:1px solid var(--glass-border);border-radius:16px;padding:18px;}
 .ai-panel h3{font-family:var(--fn);font-size:15px;font-weight:600;color:var(--t1);margin-bottom:4px;letter-spacing:-.2px;}
@@ -528,7 +534,7 @@ textarea.form-input{resize:vertical;}
 .btn-primary:active{transform:scale(.98);}
 
 /* CAT MULTI PICKER in MODAL */
-#modal-cat-options{display:flex;flex-direction:column;gap:0;margin-top:4px;}
+#modal-cat-options{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px;}
 .mcat-chip{
   font-size:11px;font-weight:500;padding:5px 11px;border-radius:20px;cursor:pointer;
   border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:rgba(235,235,245,0.5);
@@ -536,13 +542,6 @@ textarea.form-input{resize:vertical;}
 }
 .mcat-chip:hover{border-color:rgba(255,255,255,0.22);color:var(--t1);}
 .mcat-chip.selected{color:#fff;border-color:transparent;}
-
-/* grouped category picker */
-.cat-picker-group{padding:8px 0;border-top:1px solid var(--glass-border);}
-.cat-picker-group:first-child{border-top:0;padding-top:0;}
-.cat-picker-group-title{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:10px;font-weight:600;color:var(--t2);letter-spacing:.04em;}
-.cat-picker-group-line{width:10px;height:2px;border-radius:2px;flex-shrink:0;}
-.cat-picker-chip-row{display:flex;flex-wrap:wrap;gap:5px;}
 
 #url-row{display:flex;gap:6px;}
 #url-row input{flex:1;}
@@ -1163,7 +1162,7 @@ body.ai-panel-open #ai-side-handle{
   opacity:0;transition:opacity .15s,color .15s;
 }
 .ref-card:hover .card-title-edit-btn{opacity:1;}
-.card-title-edit-btn:hover{color:#aeb3bb;}
+.card-title-edit-btn:hover{color:var(--accent);}
 @media(hover:none){.card-title-edit-btn{opacity:1;}}
 .card-title-input{
   flex:1;width:100%;
