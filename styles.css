@@ -1178,3 +1178,16 @@ body.ai-panel-open #ai-side-handle{
   box-shadow:0 0 0 2px rgba(10,132,255,0.2);
   margin-bottom:0;
 }
+
+
+/* v39 media reliability + loading performance */
+.ref-card{
+  content-visibility:auto;
+  contain-intrinsic-size:190px 248px;
+}
+.card-media{transition:opacity .16s ease;}
+.card-media.media-loading{opacity:.72;}
+.card-media.media-ready{opacity:1;}
+.card-media.media-error{opacity:0;min-height:0;}
+#ai-tab:not(.active) .ai-target-card img,
+#ai-tab:not(.active) .ai-target-card video{display:none!important;}

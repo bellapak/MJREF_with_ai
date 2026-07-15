@@ -45,9 +45,9 @@ let driveBlobPromiseCache=new Map();
 let localBlobDbPromise=null;
 let driveFetchActive=0;
 let driveFetchQueue=[];
-const DRIVE_FETCH_CONCURRENCY=16;
-const CARD_THUMB_SIZE=220;
-const PRIORITY_CARD_COUNT=40;
+const DRIVE_FETCH_CONCURRENCY=6;
+const CARD_THUMB_SIZE=192;
+const PRIORITY_CARD_COUNT=12;
 const DRIVE_THUMB_CACHE_PREFIX='drive-thumb:';
 const LOCAL_MEDIA_DB_NAME='refboard-local-media-v1';
 const LOCAL_MEDIA_STORE_NAME='media';
@@ -66,26 +66,105 @@ function showToast(msg,type=''){
 }
 
 function normalizeItem(raw={}){
-  const type=raw.type || (String(raw.mimeType||raw.fileType||'').startsWith('video/')?'video':'image');
+  let src=raw.src || raw.url || raw.mediaUrl || '';
+  const sourceUrl=raw.sourceUrl || raw.source_url || '';
+  let driveFileId=raw.driveFileId || raw.fileId || extractGoogleDriveFileId(src) || extractGoogleDriveFileId(sourceUrl) || '';
+  let type=raw.type || (String(raw.mimeType||raw.fileType||'').startsWith('video/')?'video':'image');
+
+  // sourceUrl에만 남은 이미지 주소와 Google Drive 공유 링크를 자동 복구합니다.
+  if(!src && isDirectMediaUrl(sourceUrl)) src=sourceUrl;
+  if(type!=='carousel' && type!=='video' && type!=='image' && type!=='link') type=guessType(src||sourceUrl);
+
   return {
     id: raw.id || uid(),
     title: first(raw.title, raw.name, raw.filename, '제목없음'),
-    type: type,
-    src: raw.src || raw.url || raw.mediaUrl || '',
+    type,
+    src,
     previewSrc: raw.previewSrc || '',
-    driveFileId: raw.driveFileId || raw.fileId || '',
+    driveFileId,
     mimeType: raw.mimeType || raw.fileType || '',
     thumbnailLink: raw.thumbnailLink || raw.thumbnail || '',
-    fileName: raw.fileName || raw.filename || raw.name || '',
+    fileName: raw.fileName || raw.filename || raw.name || fileNameFromUrl(src) || '',
     localBlobKey: raw.localBlobKey || '',
     catIds: Array.isArray(raw.catIds)?raw.catIds:[],
-    platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl: raw.sourceUrl || raw.source_url || '',
+    platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl,
     caption: raw.caption || raw.description || raw.text || '', hook: raw.hook || raw.headline || '', cta: raw.cta || '',
     visualNotes: raw.visualNotes || raw.visual_notes || '', contentNotes: raw.contentNotes || raw.content_notes || '', notes: raw.notes || '',
-    carousel: Array.isArray(raw.carousel)?raw.carousel:[],
+    carousel: Array.isArray(raw.carousel)?raw.carousel.map(slide=>normalizeMediaRef(slide)):[],
     ts: raw.ts || raw.createdAt || Date.now(),
     _file: raw._file
   };
+}
+
+function normalizeMediaRef(raw={}){
+  let src=raw.src || raw.url || raw.mediaUrl || '';
+  const sourceUrl=raw.sourceUrl || raw.source_url || '';
+  if(!src && isDirectMediaUrl(sourceUrl)) src=sourceUrl;
+  return {
+    ...raw,
+    id:raw.id||uid('s'),
+    src,
+    sourceUrl,
+    driveFileId:raw.driveFileId||raw.fileId||extractGoogleDriveFileId(src)||extractGoogleDriveFileId(sourceUrl)||'',
+    fileName:raw.fileName||raw.filename||raw.name||fileNameFromUrl(src)||'',
+    mimeType:raw.mimeType||raw.fileType||'',
+    thumbnailLink:raw.thumbnailLink||raw.thumbnail||'',
+    localBlobKey:raw.localBlobKey||''
+  };
+}
+
+function isDirectMediaUrl(url=''){
+  return /^(?:https?:|data:|blob:)/i.test(String(url)) && /\.(?:png|jpe?g|gif|webp|avif|svg|mp4|webm|mov|m4v)(?:[?#].*)?$/i.test(String(url));
+}
+
+function extractGoogleDriveFileId(url=''){
+  const value=String(url||'');
+  const patterns=[/\/d\/([a-zA-Z0-9_-]{20,})/,/[?&]id=([a-zA-Z0-9_-]{20,})/,/\/file\/d\/([a-zA-Z0-9_-]{20,})/];
+  for(const pattern of patterns){ const match=value.match(pattern); if(match) return match[1]; }
+  return '';
+}
+
+function fileNameFromUrl(url=''){
+  if(!url) return '';
+  try{
+    const parsed=new URL(String(url),location.href);
+    return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop()||'').split('?')[0].split('#')[0];
+  }catch(e){
+    return decodeURIComponent(String(url).split(/[?#]/)[0].split('/').pop()||'');
+  }
+}
+
+function hasMediaReference(media){
+  return !!(media && (media._file || media.previewSrc || media.localBlobKey || media.driveFileId || media.src || isDirectMediaUrl(media.sourceUrl)));
+}
+
+function repairAndPruneMediaItems(){
+  let linked=0, removed=0;
+  const repaired=[];
+  for(const raw of items){
+    const it=normalizeItem(raw);
+    if(!it.src && isDirectMediaUrl(it.sourceUrl)){ it.src=it.sourceUrl; linked++; }
+    if(!it.driveFileId){
+      const driveId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl);
+      if(driveId){ it.driveFileId=driveId; linked++; }
+    }
+
+    if(it.type==='carousel'){
+      const before=it.carousel.length;
+      it.carousel=it.carousel.map(normalizeMediaRef).filter(hasMediaReference);
+      removed+=before-it.carousel.length;
+      if(!it.carousel.length){ removed++; continue; }
+    }else if(it.type==='image' || it.type==='video'){
+      if(!hasMediaReference(it)){ removed++; continue; }
+    }else if(it.type==='link'){
+      if(!it.sourceUrl && !it.src){ removed++; continue; }
+      if(!it.sourceUrl && it.src) it.sourceUrl=it.src;
+    }
+    repaired.push(it);
+  }
+  items=repaired;
+  state={groups,categories,items};
+  return {linked,removed};
 }
 
 function updateAutosave(mode){ const el=$('autosave-indicator'); if(el){el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'저장 중':'저장됨';}}
@@ -275,7 +354,10 @@ async function listDriveFilesRecursive(parentId){
 }
 
 function isDriveMediaFile(f){ return /^image\//.test(f.mimeType||'') || /^video\//.test(f.mimeType||''); }
-function cleanFileBase(name=''){ return String(name).replace(/\.[^.]+$/,'').trim().toLowerCase(); }
+function cleanFileBase(name=''){
+  const base=fileNameFromUrl(String(name||'')).replace(/\.[^.]+$/,'');
+  return base.normalize('NFKC').replace(/[\s_\-]+/g,' ').trim().toLowerCase();
+}
 
 function fileToDriveItem(f){
   return normalizeItem({id:'d'+f.id,title:f.name,type:(f.mimeType||'').startsWith('video/')?'video':'image',driveFileId:f.id,mimeType:f.mimeType,fileName:f.name,thumbnailLink:f.thumbnailLink||'',ts:f.modifiedTime?Date.parse(f.modifiedTime):Date.now(),sourceType:'drive_assets'});
@@ -376,7 +458,7 @@ async function syncItemsWithDriveAssets(){
       const f=byId.get(it.driveFileId);
       it.mimeType=it.mimeType||f.mimeType; it.fileName=it.fileName||f.name; it.thumbnailLink=it.thumbnailLink||f.thumbnailLink||'';
     }else{
-      const candidates=[it.fileName,it.title,(it.src||'').split('/').pop(),it.sourceUrl?.split('/').pop()].filter(Boolean).map(cleanFileBase);
+      const candidates=[it.fileName,it.title,fileNameFromUrl(it.src),fileNameFromUrl(it.sourceUrl)].filter(Boolean).map(cleanFileBase);
       const hit=candidates.map(k=>byName.get(k)).find(Boolean);
       if(hit){
         it.driveFileId=hit.id; it.mimeType=it.mimeType||hit.mimeType; it.fileName=it.fileName||hit.name; it.thumbnailLink=it.thumbnailLink||hit.thumbnailLink||'';
@@ -392,7 +474,7 @@ async function syncItemsWithDriveAssets(){
           slide.mimeType=slide.mimeType||f.mimeType; slide.fileName=slide.fileName||f.name; slide.thumbnailLink=slide.thumbnailLink||f.thumbnailLink||'';
           continue;
         }
-        const sc=[slide.fileName,slide.title,(slide.src||'').split('/').pop()].filter(Boolean).map(cleanFileBase);
+        const sc=[slide.fileName,slide.title,fileNameFromUrl(slide.src),fileNameFromUrl(slide.sourceUrl)].filter(Boolean).map(cleanFileBase);
         const sh=sc.map(k=>byName.get(k)).find(Boolean);
         if(sh){
           slide.driveFileId=sh.id; slide.mimeType=slide.mimeType||sh.mimeType; slide.fileName=slide.fileName||sh.name; slide.thumbnailLink=slide.thumbnailLink||sh.thumbnailLink||'';
@@ -523,7 +605,6 @@ function tuneCardImageElement(img, priority=false){
   img.height = CARD_THUMB_SIZE;
   img.sizes = '(max-width: 720px) 42vw, 150px';
   img.onload = () => setMediaLoaded(img);
-  img.onerror = () => setMediaLoadError(img);
 }
 
 async function getPersistedDriveThumbURL(fileId){
@@ -592,7 +673,8 @@ function loadDriveImageElement(img, priority=false){
     })
     .catch(err => {
       console.warn('Drive image load failed:', err);
-      setMediaLoadError(img);
+      if(isMissingDriveFileError(err)) handleUnrecoverableMediaError(img);
+      else setMediaLoadError(img);
       return '';
     })
     .finally(()=>img.classList.remove('media-loading'));
@@ -671,7 +753,7 @@ const driveImageObserver = new IntersectionObserver((entries, observer) => {
       }
     }
   });
-}, { rootMargin: '600px', threshold: 0.01 });
+}, { rootMargin: '320px', threshold: 0.01 });
 
 // 외부 URL 이미지용 lazy observer — src 세팅 자체를 뷰포트 진입 시점까지 지연
 const srcLazyObserver = new IntersectionObserver((entries, observer) => {
@@ -691,13 +773,59 @@ const srcLazyObserver = new IntersectionObserver((entries, observer) => {
           img.dataset.mimeType = lazyFallbackMime || '';
           img.dataset.driveThumb = lazyFallbackThumb;
           loadDriveImageElement(img, false);
-        } : () => setMediaLoadError(img);
+        } : () => handleUnrecoverableMediaError(img);
         img.onload = () => setMediaLoaded(img);
         img.src = lazySrc;
       }
     }
   });
-}, { rootMargin: '600px', threshold: 0.01 });
+}, { rootMargin: '240px', threshold: 0.01 });
+
+let brokenMediaCleanupTimer=null;
+const brokenMediaQueue=[];
+
+function scheduleBrokenMediaCleanup(ownerId,mediaId=''){
+  if(!ownerId) return;
+  if(!brokenMediaQueue.some(x=>x.ownerId===ownerId && x.mediaId===mediaId)) brokenMediaQueue.push({ownerId,mediaId});
+  clearTimeout(brokenMediaCleanupTimer);
+  brokenMediaCleanupTimer=setTimeout(()=>{
+    let changed=false;
+    while(brokenMediaQueue.length){
+      const {ownerId,mediaId}=brokenMediaQueue.shift();
+      const it=items.find(x=>x.id===ownerId);
+      if(!it) continue;
+      if(it.type==='carousel' && mediaId){
+        const before=it.carousel.length;
+        it.carousel=it.carousel.filter(sl=>sl.id!==mediaId);
+        if(it.carousel.length!==before) changed=true;
+        if(!it.carousel.length){ items=items.filter(x=>x.id!==ownerId); changed=true; }
+      }else if(it.type==='image' || it.type==='video'){
+        items=items.filter(x=>x.id!==ownerId); changed=true;
+      }
+    }
+    if(changed){
+      if(selectedId && !items.some(x=>x.id===selectedId)) selectedId=null;
+      saveLocal();
+      renderAll();
+      showToast('이미지가 없는 콘텐츠를 자동 정리했습니다.','success');
+    }
+  },180);
+}
+
+function markMediaElement(el,ownerId,mediaId=''){
+  if(!el) return;
+  el.dataset.ownerId=ownerId||'';
+  el.dataset.mediaId=mediaId||'';
+}
+
+function handleUnrecoverableMediaError(el){
+  setMediaLoadError(el);
+  scheduleBrokenMediaCleanup(el?.dataset?.ownerId||'',el?.dataset?.mediaId||'');
+}
+
+function isMissingDriveFileError(err){
+  return /(?:요청 실패|request failed)\s*(?:404|410)|\b(?:404|410)\b/i.test(String(err?.message||err||''));
+}
 
 // ─── Delete & Sync Logic ───
 function getDeletedDriveIds(){ try{return new Set(JSON.parse(localStorage.getItem(DELETED_DRIVE_IDS_KEY)||'[]'));} catch(e){return new Set();} }
@@ -805,7 +933,7 @@ function bindRemoteCardMedia(el,it,placeholder='',priority=false){
   if(it.src && !it.driveFileId){
     if(priority){
       el.classList.add('media-loading');
-      el.onerror = () => setMediaLoadError(el);
+      el.onerror = () => handleUnrecoverableMediaError(el);
       el.onload = () => setMediaLoaded(el);
       el.src = it.src;
     }else{
@@ -834,6 +962,7 @@ function bindRemoteCardMedia(el,it,placeholder='',priority=false){
   }
 
   if(placeholder) el.src=placeholder;
+  else handleUnrecoverableMediaError(el);
 }
 
 function bindCardMedia(el,it,placeholder='',priority=false){
@@ -869,15 +998,34 @@ function bindDriveMediaRemote(el,it,placeholder=''){
   if(it.driveFileId){
     el.classList.add('media-loading');
     getDriveObjectURL(it.driveFileId,it.mimeType,true)
-      .then(u=>{ if(u) el.src=u; })
-      .catch(e=>{ console.error(e); if(placeholder) el.src=placeholder; })
+      .then(u=>{
+        if(!u){ handleUnrecoverableMediaError(el); return; }
+        el.onerror=()=>handleUnrecoverableMediaError(el);
+        el.onload=()=>setMediaLoaded(el);
+        el.src=u;
+      })
+      .catch(e=>{
+        console.error(e);
+        if(isMissingDriveFileError(e)) handleUnrecoverableMediaError(el);
+        else if(placeholder) el.src=placeholder;
+        else setMediaLoadError(el);
+      })
       .finally(()=>el.classList.remove('media-loading'));
-  } else if(it.src) el.src=it.src;
-  else if(placeholder) el.src=placeholder;
+  } else if(it.src){
+    el.onerror=()=>handleUnrecoverableMediaError(el);
+    el.onload=()=>setMediaLoaded(el);
+    el.src=it.src;
+  } else if(placeholder) el.src=placeholder;
+  else handleUnrecoverableMediaError(el);
 }
 
 // ─── UI & Rendering ───
-function renderAll(){ renderCategories(); renderBoard(); renderAiTargets(); updateDriveUi(); }
+function renderAll(){
+  renderCategories();
+  renderBoard();
+  if($('ai-tab')?.classList.contains('active')) renderAiTargets();
+  updateDriveUi();
+}
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
 function filteredItems(){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
@@ -952,7 +1100,7 @@ function startInlineTitleEdit(id, titleEl){
 }
 
 function cardNode(it,index=0){
-  const isPriority = currentView==='list' ? index < 14 : index < PRIORITY_CARD_COUNT;
+  const isPriority = currentView==='list' ? index < 8 : index < PRIORITY_CARD_COUNT;
   const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
   if(isDownloadableItem(it)){
@@ -964,15 +1112,15 @@ function cardNode(it,index=0){
   
   let media = null;
   if(it.type==='video'){
-    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; bindCardMedia(media,it,'',isPriority); 
+    media=document.createElement('video'); media.className='card-media'; media.muted=true; media.playsInline=true; media.preload='none'; markMediaElement(media,it.id,it.id); bindCardMedia(media,it,'',isPriority); 
     media.onmouseenter=async()=>{ if(!media.src && it.driveFileId){ try{ media.src=await getDriveObjectURL(it.driveFileId,it.mimeType); }catch(e){} } media.play().catch(()=>{}); }; 
     media.onmouseleave=()=>{media.pause(); if(media.currentTime) media.currentTime=0;};
   }else if(it.type==='carousel'){
-    const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; tuneCardImageElement(media,isPriority); bindCardMedia(media,firstSlide,'',isPriority); media.alt=it.title;
+    const firstSlide=it.carousel?.[0]||{}; media=document.createElement('img'); media.className='card-media'; markMediaElement(media,it.id,firstSlide.id||''); tuneCardImageElement(media,isPriority); bindCardMedia(media,firstSlide,'',isPriority); media.alt=it.title;
   }else if(it.type==='link'){
     // 링크 타입의 경우 썸네일 칸을 아예 생성하지 않음
   }else{
-    media=document.createElement('img'); media.className='card-media'; tuneCardImageElement(media,isPriority); bindCardMedia(media,it,'',isPriority); media.alt=it.title;
+    media=document.createElement('img'); media.className='card-media'; markMediaElement(media,it.id,it.id); tuneCardImageElement(media,isPriority); bindCardMedia(media,it,'',isPriority); media.alt=it.title;
   }
   
   if(media) { card.appendChild(media); }
@@ -1021,7 +1169,7 @@ function renderBoard(){
     return; 
   }
   
-  const chunkSize=currentView==='list'?60:28; 
+  const chunkSize=currentView==='list'?40:20; 
   let idx=0;
   const end=Math.min(idx+chunkSize, arr.length);
   for(; idx<end; idx++) frag.appendChild(cardNode(arr[idx], idx));
@@ -1445,6 +1593,7 @@ function mountCarouselDetailMedia(it){
     const wrap=document.createElement('div'); wrap.className='carousel-detail-item';
     const media=document.createElement((s.mimeType||'').startsWith('video/')?'video':'img');
     if(media.tagName==='VIDEO') media.controls=true;
+    markMediaElement(media,it.id,s.id||'');
     bindDriveMedia(media,s); wrap.appendChild(media);
     const cap=document.createElement('div'); cap.className='carousel-detail-caption'; cap.textContent=`${idx+1}. ${s.fileName||s.title||'slide'}`;
     wrap.appendChild(cap); grid.appendChild(wrap);
@@ -1459,10 +1608,10 @@ function renderDetail(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   const m=$('detail-media'); if(!m)return; m.innerHTML='';
   let el;
-  if(it.type==='video'){ el=document.createElement('video'); el.controls=true; bindDriveMedia(el,it); m.appendChild(el); }
-  else if(it.type==='carousel'){ const first=it.carousel?.[0]; if(first){ el=document.createElement((first.mimeType||'').startsWith('video/')?'video':'img'); if(el.tagName==='VIDEO') el.controls=true; bindDriveMedia(el,first); m.appendChild(el); } }
+  if(it.type==='video'){ el=document.createElement('video'); el.controls=true; markMediaElement(el,it.id,it.id); bindDriveMedia(el,it); m.appendChild(el); }
+  else if(it.type==='carousel'){ const first=it.carousel?.[0]; if(first){ el=document.createElement((first.mimeType||'').startsWith('video/')?'video':'img'); if(el.tagName==='VIDEO') el.controls=true; markMediaElement(el,it.id,first.id||''); bindDriveMedia(el,first); m.appendChild(el); } }
   else if(it.type==='link'){ /* 미디어 영역 무시 */ }
-  else{ el=document.createElement('img'); bindDriveMedia(el,it); m.appendChild(el); }
+  else{ el=document.createElement('img'); markMediaElement(el,it.id,it.id); bindDriveMedia(el,it); m.appendChild(el); }
   
   renderDetailCatOptions();
   const f=$('detail-fields'); if(!f) return;
@@ -1513,9 +1662,9 @@ function saveDetailEdits(){
   it.contentNotes=$('detail-edit-content')?.value||'';
   
   it.sourceUrl=$('detail-edit-link')?.value||'';
-  if(it.type === 'link' && it.sourceUrl) { 
-    it.src = it.sourceUrl; 
-  }
+  if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;
+  if((it.type==='image'||it.type==='video') && !it.src && isDirectMediaUrl(it.sourceUrl)) it.src=it.sourceUrl;
+  if(!it.driveFileId) it.driveFileId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl)||'';
 
   it.notes=$('detail-edit-notes')?.value||'';
   saveData(); renderBoard(); renderAiTargets(); renderDetail();
@@ -1566,14 +1715,28 @@ function runBatchAnalysis(){ const res=$('ai-batch-result'); if(!res)return; res
 
 // ─── Initialization ───
 window.addEventListener('DOMContentLoaded',()=>{
-  try{ restoreCachedDriveToken(); }catch(e){ console.warn(e); }
-  loadLocal(); 
+  let cachedToken='';
+  try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
+  loadLocal();
   normalizeCategoryGroups();
   installReliablePasteListener();
-  
   removeItemsThatAreCarouselSlides();
-  
-  renderAll(); 
-  onProviderChange(); 
+  const repaired=repairAndPruneMediaItems();
+  if(repaired.linked||repaired.removed) saveLocal();
+
+  renderAll();
+  onProviderChange();
   updateDriveUi();
+
+  // 캐시된 Drive 권한이 있으면 누락된 이미지 연결을 자동 복구합니다.
+  if(cachedToken){
+    requestAnimationFrame(()=>{
+      syncItemsWithDriveAssets()
+        .then(sync=>{
+          const cleaned=repairAndPruneMediaItems();
+          if(sync.linked||sync.added||cleaned.linked||cleaned.removed){ saveLocal(); renderAll(); }
+        })
+        .catch(err=>console.warn('Drive 미디어 자동 연결 생략:',err));
+    });
+  }
 });
