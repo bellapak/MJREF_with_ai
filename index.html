@@ -32,9 +32,6 @@
   <button class="tb-btn tab-btn" id="tab-ai" onclick="toggleAiPanel()">AI 분석</button>
   <div style="width:1px;height:24px;background:var(--b2);margin:0 4px;"></div>
   <button class="tb-btn primary" onclick="openAddModal()">+ 추가</button>
-  <button class="tb-btn" onclick="document.getElementById('make-json-input').click()">Make JSON 가져오기</button>
-  <button class="tb-btn" onclick="copyMakeJsonTemplate()">JSON 구조 복사</button>
-  <input type="file" id="make-json-input" accept="application/json,.json" style="display:none" onchange="importMakeJsonFile(event)">
   <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
   <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
   <button class="tb-btn" id="gdrive-save-btn"    onclick="saveToDrive()">Drive 저장</button>
@@ -158,11 +155,11 @@
         <div id="api-key-hint" style="font-size:11px;color:var(--t3);margin-top:6px;line-height:1.7;"></div>
       </div>
 
-      <!-- SINGLE ITEM ANALYSIS -->
+      <!-- COPYWRITING GENERATION -->
       <div class="ai-panel">
-        <h3>검색 레퍼런스 분석</h3>
-        <p class="ai-desc">분석할 레퍼런스를 선택하고 분석 유형을 골라주세요. 이미지·영상 모두 지원해요.</p>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:8px;">레퍼런스 선택 (복수 선택 가능)</div>
+        <h3>레퍼런스 기반 카피 생성</h3>
+        <p class="ai-desc">참고할 레퍼런스를 선택하면, 그 톤·구조·소구점을 분석해서 새로운 <strong>본문 카피</strong>와 <strong>이미지 카피</strong>(이미지 위에 얹을 짧은 문구)를 만들어줘요.</p>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:8px;">참고 레퍼런스 선택 (복수 선택 가능, 이미지가 있는 레퍼런스일수록 정확해요)</div>
         <div class="ai-filter-bar">
           <select id="ai-group-filter" class="ai-filter-select" onchange="onAiGroupFilterChange()">
             <option value="">전체 대분류</option>
@@ -175,28 +172,12 @@
         </div>
         <div class="ai-filter-meta" id="ai-filter-meta">전체 레퍼런스를 표시 중</div>
         <div class="ai-target-selector" id="ai-target-selector"></div>
-        <div style="font-size:11px;color:var(--t2);margin:10px 0 6px;">분석 유형</div>
-        <div class="ai-options" id="ai-options">
-          <button class="ai-opt-btn selected" data-opt="mood">무드 & 색상</button>
-          <button class="ai-opt-btn" data-opt="layout">레이아웃 구조</button>
-          <button class="ai-opt-btn" data-opt="copy">카피 & 문장 구조</button>
-          <button class="ai-opt-btn" data-opt="strategy">광고 전략</button>
-          <button class="ai-opt-btn" data-opt="storyboard">스토리보드 추출</button>
-          <button class="ai-opt-btn" data-opt="script">대사 / 자막 추출</button>
-          <button class="ai-opt-btn" data-opt="hook">훅 포인트 분석</button>
-          <button class="ai-opt-btn" data-opt="abtest">마케팅 A/B 테스트</button>
+        <div class="form-row" style="margin:12px 0 0;">
+          <label class="form-label">추가 요청사항 (선택)</label>
+          <textarea class="form-input soft" id="ai-copy-brief" rows="2" placeholder="예: 20대 여성 타겟, 친근한 톤, 신제품 출시 강조, 할인율 15% 언급 등"></textarea>
         </div>
-        <button class="ai-run-btn" id="ai-run-btn" onclick="runSingleAnalysis()">✦ 분석 시작</button>
+        <button class="ai-run-btn" id="ai-run-btn" onclick="runCopyGeneration()">✦ 카피 생성</button>
         <div class="ai-result-area" id="ai-single-result"></div>
-      </div>
-
-      <!-- BOARD SYNTHESIS -->
-      <div class="ai-panel">
-        <h3>✦ 전체 보드 종합 분석</h3>
-        <p class="ai-desc">수집된 레퍼런스 전체를 바탕으로 공통 무드·방향성·콘텐츠 전략을 도출해요.</p>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:10px;">이미지 <span id="board-img-cnt" style="color:var(--t1);font-weight:500">0</span>개 · 영상 <span id="board-vid-cnt" style="color:var(--t1);font-weight:500">0</span>개 수집됨</div>
-        <button class="ai-run-btn" id="ai-batch-run-btn" onclick="runBatchAnalysis()">✦ 전체 분석 시작</button>
-        <div class="ai-result-area" id="ai-batch-result"></div>
       </div>
 
     </div>

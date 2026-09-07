@@ -781,46 +781,52 @@ const srcLazyObserver = new IntersectionObserver((entries, observer) => {
   });
 }, { rootMargin: '240px', threshold: 0.01 });
 
-let brokenMediaCleanupTimer=null;
-const brokenMediaQueue=[];
-
-function scheduleBrokenMediaCleanup(ownerId,mediaId=''){
-  if(!ownerId) return;
-  if(!brokenMediaQueue.some(x=>x.ownerId===ownerId && x.mediaId===mediaId)) brokenMediaQueue.push({ownerId,mediaId});
-  clearTimeout(brokenMediaCleanupTimer);
-  brokenMediaCleanupTimer=setTimeout(()=>{
-    let changed=false;
-    while(brokenMediaQueue.length){
-      const {ownerId,mediaId}=brokenMediaQueue.shift();
-      const it=items.find(x=>x.id===ownerId);
-      if(!it) continue;
-      if(it.type==='carousel' && mediaId){
-        const before=it.carousel.length;
-        it.carousel=it.carousel.filter(sl=>sl.id!==mediaId);
-        if(it.carousel.length!==before) changed=true;
-        if(!it.carousel.length){ items=items.filter(x=>x.id!==ownerId); changed=true; }
-      }else if(it.type==='image' || it.type==='video'){
-        items=items.filter(x=>x.id!==ownerId); changed=true;
-      }
-    }
-    if(changed){
-      if(selectedId && !items.some(x=>x.id===selectedId)) selectedId=null;
-      saveLocal();
-      renderAll();
-      showToast('이미지가 없는 콘텐츠를 자동 정리했습니다.','success');
-    }
-  },180);
-}
-
 function markMediaElement(el,ownerId,mediaId=''){
   if(!el) return;
   el.dataset.ownerId=ownerId||'';
   el.dataset.mediaId=mediaId||'';
 }
 
+// 드라이브에 실제로 존재하지 않는 미디어는 자동 삭제하지 않고,
+// 카드에 경고 배지를 띄워 사용자가 직접 확인 후 삭제하도록 합니다.
 function handleUnrecoverableMediaError(el){
   setMediaLoadError(el);
-  scheduleBrokenMediaCleanup(el?.dataset?.ownerId||'',el?.dataset?.mediaId||'');
+  showMissingMediaWarning(el);
+}
+
+function showMissingMediaWarning(el){
+  if(!el) return;
+  const ownerId=el.dataset?.ownerId||'';
+  if(!ownerId) return;
+  const mediaId=el.dataset?.mediaId||'';
+  const host=el.closest('.ref-card') || el.closest('#detail-media') || el.parentElement;
+  if(!host || host.querySelector(`.media-missing-warning[data-media-id="${mediaId}"]`)) return;
+
+  const warn=document.createElement('div');
+  warn.className='media-missing-warning';
+  warn.dataset.mediaId=mediaId;
+  warn.innerHTML=`<span>⚠ Drive에서 파일을 찾을 수 없어요</span><button type="button">삭제</button>`;
+  warn.querySelector('button').onclick=(e)=>{ e.stopPropagation(); removeMissingMedia(ownerId,mediaId); };
+  host.style.position = host.style.position || 'relative';
+  host.appendChild(warn);
+}
+
+function removeMissingMedia(ownerId,mediaId){
+  const it=items.find(x=>x.id===ownerId);
+  if(!it) return;
+  if(!confirm('Drive 원본을 찾을 수 없는 파일이에요. 이 항목을 삭제할까요?')) return;
+
+  if(it.type==='carousel' && mediaId){
+    it.carousel=(it.carousel||[]).filter(sl=>sl.id!==mediaId);
+    if(!it.carousel.length) items=items.filter(x=>x.id!==ownerId);
+  }else{
+    items=items.filter(x=>x.id!==ownerId);
+  }
+  if(selectedId && !items.some(x=>x.id===selectedId)){ selectedId=null; $('detail-panel')?.classList.remove('open'); }
+  saveLocal();
+  renderAll();
+  if(selectedId) renderDetail();
+  showToast('삭제 완료','success');
 }
 
 function isMissingDriveFileError(err){
@@ -1471,8 +1477,7 @@ async function readClipboardNow(e){
 }
 
 async function addUrlItem(url){ items.push(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),ts:Date.now()})); await saveData(); renderAll(); }
-function copyMakeJsonTemplate(){ navigator.clipboard?.writeText(JSON.stringify([{title:'예시',type:'image',url:'https://...',caption:'캡션',brand:'브랜드'}],null,2)); showToast('JSON 구조 복사 완료','success'); }
-function importMakeJsonFile(e){ const f=e.target.files?.[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ try{ const data=JSON.parse(r.result); const arr=Array.isArray(data)?data:(data.items||[]); items.push(...arr.map(normalizeItem)); saveData(); renderAll(); showToast('JSON 가져오기 완료','success'); }catch(err){showToast('JSON 형식 오류','error');} }; r.readAsText(f); }
+
 function installReliablePasteListener(){
   if(window.__refboardPasteInstalled) return;
   window.__refboardPasteInstalled=true;
@@ -1710,8 +1715,140 @@ function selectAllVisibleAiTargets(){ filteredItems().forEach(i=>aiSelectedIds.a
 function clearVisibleAiTargets(){ filteredItems().forEach(i=>aiSelectedIds.delete(i.id)); renderAiTargets(); }
 function saveApiKey(){ const p=$('ai-provider')?.value||'google'; const v=$('ai-apikey-input')?.value||''; localStorage.setItem('refboard_ai_'+p,v); $('api-key-status').style.display='block'; showToast('AI 키 저장 완료','success'); }
 function onProviderChange(){ const p=$('ai-provider')?.value||'google'; if($('ai-apikey-input')) $('ai-apikey-input').value=localStorage.getItem('refboard_ai_'+p)||''; if($('api-key-hint')) $('api-key-hint').textContent=PROVIDER_HINTS[p]||''; }
-function runSingleAnalysis(){ const res=$('ai-single-result'); if(!res)return; const chosen=[...aiSelectedIds].map(id=>items.find(i=>i.id===id)).filter(Boolean); res.classList.add('open'); res.innerHTML=`선택된 ${chosen.length}개 레퍼런스 기준으로 분석할 수 있습니다.<br>현재 완성본은 Drive 미디어 저장/불러오기 안정화에 초점을 맞춘 버전입니다.`; }
-function runBatchAnalysis(){ const res=$('ai-batch-result'); if(!res)return; res.classList.add('open'); res.innerHTML=`전체 ${items.length}개 레퍼런스가 수집되어 있습니다.`; }
+
+// ─── AI Copywriting (본문 카피 / 이미지 카피 생성) ───
+const COPY_SYSTEM_PROMPT = `당신은 메타 광고(인스타그램/페이스북)와 SNS 콘텐츠를 전문으로 다루는 카피라이터입니다.
+입력으로 주어지는 레퍼런스(이미지와 텍스트 정보)의 톤, 문장 구조, 소구 포인트, 후킹 방식을 파악해서 그 스타일을 참고한 새로운 카피를 작성합니다.
+반드시 아래 두 섹션으로만 결과를 작성하고, 분석 코멘트나 다른 설명은 덧붙이지 마세요.
+
+[본문 카피]
+(인스타그램/메타 광고 게시물 본문 전체. 훅으로 시작해서 소구점을 설명하고 CTA로 마무리. 실제 게시글처럼 자연스러운 줄바꿈과 이모지 사용)
+
+[이미지 카피]
+(이미지 위에 짧게 얹을 문구 1~3개 제안. 각 문구는 12자 내외로 짧고 임팩트 있게, 줄바꿈으로 구분)
+
+한국어로 작성하고, 레퍼런스에 브랜드명이 있으면 자연스럽게 반영하되 과도하게 반복하지 마세요.`;
+
+async function blobToBase64(blob){
+  return await new Promise((resolve,reject)=>{
+    const r=new FileReader();
+    r.onload=()=>resolve(String(r.result).split(',')[1]||'');
+    r.onerror=()=>reject(r.error||new Error('이미지 변환 실패'));
+    r.readAsDataURL(blob);
+  });
+}
+
+async function collectAiReferenceImages(selectedItems,limit=4){
+  const images=[];
+  for(const it of selectedItems){
+    if(images.length>=limit) break;
+    const media = it.type==='carousel' ? (it.carousel?.[0]||null) : (it.type==='image' ? it : null);
+    if(!media) continue;
+    try{
+      const blob=await blobFromMedia(media);
+      if(blob && blob.size) images.push(await blobToBase64(blob));
+    }catch(e){ console.warn('레퍼런스 이미지 변환 실패:',e); }
+  }
+  return images;
+}
+
+function buildAiReferenceText(selectedItems){
+  return selectedItems.map(it=>[
+    `- 제목: ${it.title||'-'}`,
+    `  브랜드: ${it.brand||'-'}`,
+    `  본문: ${it.caption||'-'}`,
+    `  훅: ${it.hook||'-'}`,
+    `  CTA: ${it.cta||'-'}`,
+    `  비주얼 메모: ${it.visualNotes||'-'}`,
+    `  콘텐츠 메모: ${it.contentNotes||'-'}`
+  ].join('\n')).join('\n\n');
+}
+
+async function requestAiCompletion(provider,apiKey,systemPrompt,userPrompt,images){
+  if(provider==='anthropic') return await callAnthropicCopy(apiKey,systemPrompt,userPrompt,images);
+  if(provider==='openai') return await callOpenAiCopy(apiKey,systemPrompt,userPrompt,images);
+  return await callGeminiCopy(apiKey,systemPrompt,userPrompt,images);
+}
+
+async function callAnthropicCopy(apiKey,systemPrompt,userPrompt,images){
+  const content=images.map(b64=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}}));
+  content.push({type:'text',text:userPrompt});
+  const res=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key':apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body:JSON.stringify({model:'claude-sonnet-5',max_tokens:1200,system:systemPrompt,messages:[{role:'user',content}]})
+  });
+  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`Anthropic API 오류 ${res.status}: ${t.slice(0,200)}`); }
+  const data=await res.json();
+  return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+}
+
+async function callOpenAiCopy(apiKey,systemPrompt,userPrompt,images){
+  const content=[{type:'text',text:userPrompt}];
+  images.forEach(b64=>content.push({type:'image_url',image_url:{url:`data:image/jpeg;base64,${b64}`}}));
+  const res=await fetch('https://api.openai.com/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+    body:JSON.stringify({model:'gpt-4o',max_tokens:1200,messages:[{role:'system',content:systemPrompt},{role:'user',content}]})
+  });
+  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`OpenAI API 오류 ${res.status}: ${t.slice(0,200)}`); }
+  const data=await res.json();
+  return (data.choices?.[0]?.message?.content||'').trim();
+}
+
+async function callGeminiCopy(apiKey,systemPrompt,userPrompt,images){
+  const parts=[{text:userPrompt}];
+  images.forEach(b64=>parts.push({inline_data:{mime_type:'image/jpeg',data:b64}}));
+  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({systemInstruction:{parts:[{text:systemPrompt}]},contents:[{role:'user',parts}]})
+  });
+  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`Gemini API 오류 ${res.status}: ${t.slice(0,200)}`); }
+  const data=await res.json();
+  return (data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
+}
+
+function renderAiCopyResult(text){
+  const res=$('ai-single-result'); if(!res) return;
+  res.classList.add('open');
+  res.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7;">${esc(text)}</div>`;
+}
+
+async function runCopyGeneration(){
+  const res=$('ai-single-result'); if(!res) return;
+  const provider=$('ai-provider')?.value||'google';
+  const apiKey=localStorage.getItem('refboard_ai_'+provider)||'';
+  if(!apiKey){ showToast('AI 설정에서 API 키를 먼저 저장해주세요','error'); return; }
+
+  const chosen=[...aiSelectedIds].map(id=>items.find(i=>i.id===id)).filter(Boolean);
+  if(!chosen.length){ showToast('참고할 레퍼런스를 1개 이상 선택해주세요','error'); return; }
+
+  const runBtn=$('ai-run-btn');
+  if(runBtn){ runBtn.disabled=true; runBtn.textContent='✦ 생성 중...'; }
+  res.classList.add('open');
+  res.innerHTML='카피를 생성하고 있어요...';
+
+  try{
+    const images=await collectAiReferenceImages(chosen);
+    const brief=($('ai-copy-brief')?.value||'').trim();
+    const refText=buildAiReferenceText(chosen);
+    const userPrompt=`다음은 참고할 레퍼런스 정보입니다 (총 ${chosen.length}개, 이미지 ${images.length}개 첨부).\n\n${refText}\n\n${brief?`추가 요청사항: ${brief}\n\n`:''}위 레퍼런스의 톤과 구조를 참고해서 새로운 [본문 카피]와 [이미지 카피]를 작성해주세요.`;
+    const text=await requestAiCompletion(provider,apiKey,COPY_SYSTEM_PROMPT,userPrompt,images);
+    renderAiCopyResult(text||'생성된 카피가 없습니다. 다시 시도해주세요.');
+  }catch(e){
+    console.error(e);
+    res.innerHTML=`카피 생성에 실패했습니다.<br><span style="font-size:11px;color:var(--t3)">${esc(e.message||'')}</span>`;
+    showToast('AI 카피 생성 실패','error');
+  }finally{
+    if(runBtn){ runBtn.disabled=false; runBtn.textContent='✦ 카피 생성'; }
+  }
+}
 
 // ─── Initialization ───
 window.addEventListener('DOMContentLoaded',()=>{
