@@ -89,6 +89,7 @@ function normalizeItem(raw={}){
     catIds: Array.isArray(raw.catIds)?raw.catIds:[],
     platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl,
     caption: raw.caption || raw.description || raw.text || '', hook: raw.hook || raw.headline || '', cta: raw.cta || '',
+    imageCopy: raw.imageCopy || raw.image_copy || '',
     visualNotes: raw.visualNotes || raw.visual_notes || '', contentNotes: raw.contentNotes || raw.content_notes || '', notes: raw.notes || '',
     carousel: Array.isArray(raw.carousel)?raw.carousel.map(slide=>normalizeMediaRef(slide)):[],
     ts: raw.ts || raw.createdAt || Date.now(),
@@ -411,6 +412,14 @@ async function uploadDataFile(){
 async function saveToDrive(silent=false){
   try{
     await ensureDriveToken(); await ensureDriveFolder();
+
+    // 🔄 양방향 동기화: 사이트 안에서 삭제된 컨텐츠가 있으면 저장 시점에 Drive에서도 함께 삭제
+    const pendingDeleteIds=[...getDeletedDriveIds()];
+    if(pendingDeleteIds.length){
+      await Promise.allSettled(pendingDeleteIds.map(deleteDriveFile));
+      persistDeletedDriveIds(new Set());
+    }
+
     await Promise.all(items.map(async it=>{
       if(!it.driveFileId && it._file){
         const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
@@ -934,6 +943,39 @@ async function deleteItem(id){
   showToast('삭제 완료','success');
 }
 
+// 모아둔 레퍼런스 전체 삭제 (Drive 연결 시 원본 파일도 함께 정리, 미연결 시에는
+// 다음 'Drive 저장' 시점에 자동으로 반영됩니다 — saveToDrive의 양방향 삭제 동기화 참고)
+async function deleteAllItems(){
+  if(!items.length){ showToast('삭제할 레퍼런스가 없어요','error'); return; }
+  const count=items.length;
+  if(!confirm(`정말 전체 ${count}개 레퍼런스를 모두 삭제할까요?\n이 작업은 되돌릴 수 없습니다.`)) return;
+
+  const allDriveIds=[];
+  items.forEach(it=>allDriveIds.push(...collectDriveIdsFromItem(it)));
+  rememberDeletedDriveIds(allDriveIds);
+
+  items=[];
+  selectedId=null;
+  $('detail-panel')?.classList.remove('open');
+  saveLocal();
+  renderAll();
+
+  if(gdriveToken||restoreCachedDriveToken()){
+    try{
+      await ensureDriveToken();
+      await Promise.allSettled(allDriveIds.map(deleteDriveFile));
+      persistDeletedDriveIds(new Set());
+      await uploadDataFile().catch(console.warn);
+      showToast(`전체 삭제 완료 (Drive 파일 ${allDriveIds.length}개 포함)`,'success');
+    }catch(e){
+      console.warn(e);
+      showToast('로컬은 전체 삭제되었어요. Drive 정리는 다음 "Drive 저장" 때 자동으로 반영돼요.','success');
+    }
+  }else{
+    showToast('전체 삭제 완료 (다음 "Drive 저장" 시 Drive에도 반영돼요)','success');
+  }
+}
+
 // ─── Media Binding (Lazy Loaded) ───
 function bindRemoteCardMedia(el,it,placeholder='',priority=false){
   if(it.src && !it.driveFileId){
@@ -1037,7 +1079,7 @@ function filteredItems(){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
-  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.sourceUrl].join(' ').toLowerCase().includes(q));
+  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl].join(' ').toLowerCase().includes(q));
   arr.sort((a,b)=>currentSort==='oldest'?a.ts-b.ts:currentSort==='title'?a.title.localeCompare(b.title,'ko'):b.ts-a.ts);
   return arr;
 }
@@ -1363,7 +1405,7 @@ function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-image-copy','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
@@ -1376,7 +1418,7 @@ function fileToItem(file, extra={}){
     id, title: extra.title||file.name||'붙여넣기 이미지', type: isVideo?'video':'image', src: previewSrc, previewSrc,
     driveFileId:'', mimeType:file.type||'image/png', fileName:file.name||`paste_${Date.now()}.png`, localBlobKey,
     catIds:Array.isArray(extra.catIds)?extra.catIds:[], platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
-    caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
+    caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', imageCopy:extra.imageCopy||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
     carousel:Array.isArray(extra.carousel)?extra.carousel:[], ts:extra.ts||Date.now(), _file:file
   };
   saveLocalBlob(localBlobKey,file,{fileName:item.fileName,mimeType:item.mimeType}).catch(console.warn);
@@ -1387,7 +1429,7 @@ function handleModalFile(e){ pendingFile=e.target.files?.[0]||null; $('modal-fil
 function handleCarouselFiles(e){ pendingCarouselFiles=[...(e.target.files||[])]; const list=$('carousel-preview-list'); list.innerHTML=''; pendingCarouselFiles.forEach(f=>{const img=document.createElement('img'); img.src=URL.createObjectURL(f); img.style.cssText='width:64px;height:64px;object-fit:cover;border-radius:8px'; list.appendChild(img);}); $('carousel-count-label').textContent=`${pendingCarouselFiles.length}개 선택됨`; }
 
 async function saveFromModal(){
-  const base={title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,caption:$('add-caption').value,hook:$('add-hook').value,cta:$('add-cta').value,visualNotes:$('add-visual-notes').value,contentNotes:$('add-content-notes').value,notes:$('add-notes').value,ts:Date.now()};
+  const base={title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,caption:$('add-caption').value,hook:$('add-hook').value,cta:$('add-cta').value,imageCopy:$('add-image-copy')?.value||'',visualNotes:$('add-visual-notes').value,contentNotes:$('add-content-notes').value,notes:$('add-notes').value,ts:Date.now()};
   const url=$('add-url').value.trim();
   if(modalMode==='carousel'){
     if(!pendingCarouselFiles.length){showToast('캐러셀 이미지를 선택해주세요','error');return;}
@@ -1625,7 +1667,8 @@ function renderDetail(){
     <div class="detail-section-title">수정</div>
     <div class="form-row"><label class="form-label">제목</label><input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
-    <div class="form-row"><label class="form-label">게시물 본문</label><textarea class="detail-input" id="detail-edit-caption" rows="5" placeholder="인스타그램/광고 게시물 본문을 입력하세요">${esc(it.caption||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">게시물 본문</label><textarea class="detail-input" id="detail-edit-caption" rows="5" placeholder="원문 캡션, 광고 카피, 해시태그를 그대로 넣어주세요">${esc(it.caption||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">이미지 카피 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(이미지 안에 적힌 문구)</span></label><textarea class="detail-input" id="detail-edit-image-copy" rows="3" placeholder="이미지/썸네일 위에 실제로 적혀 있는 텍스트를 그대로 옮겨 적어주세요">${esc(it.imageCopy||'')}</textarea></div>
     <div class="form-row"><label class="form-label">훅 / 첫 문장</label><input class="detail-input" id="detail-edit-hook" value="${esc(it.hook||'')}"></div>
     <div class="form-row"><label class="form-label">CTA</label><input class="detail-input" id="detail-edit-cta" value="${esc(it.cta||'')}"></div>
     <div class="form-row"><label class="form-label">비주얼 메모</label><textarea class="detail-input" id="detail-edit-visual" rows="3">${esc(it.visualNotes||'')}</textarea></div>
@@ -1661,6 +1704,7 @@ function saveDetailEdits(){
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
   it.caption=$('detail-edit-caption')?.value||'';
+  it.imageCopy=$('detail-edit-image-copy')?.value||'';
   it.hook=$('detail-edit-hook')?.value||'';
   it.cta=$('detail-edit-cta')?.value||'';
   it.visualNotes=$('detail-edit-visual')?.value||'';
@@ -1719,6 +1763,7 @@ function onProviderChange(){ const p=$('ai-provider')?.value||'google'; if($('ai
 // ─── AI Copywriting (본문 카피 / 이미지 카피 생성) ───
 const COPY_SYSTEM_PROMPT = `당신은 메타 광고(인스타그램/페이스북)와 SNS 콘텐츠를 전문으로 다루는 카피라이터입니다.
 입력으로 주어지는 레퍼런스(이미지와 텍스트 정보)의 톤, 문장 구조, 소구 포인트, 후킹 방식을 파악해서 그 스타일을 참고한 새로운 카피를 작성합니다.
+일부 레퍼런스는 본문 텍스트 없이 이미지와 "이미지 속 문구" 정보만 있을 수 있습니다. 이 경우 첨부된 이미지 자체와 이미지 속 문구를 근거로 톤과 스타일을 분석하세요.
 반드시 아래 두 섹션으로만 결과를 작성하고, 분석 코멘트나 다른 설명은 덧붙이지 마세요.
 
 [본문 카피]
@@ -1757,6 +1802,7 @@ function buildAiReferenceText(selectedItems){
     `- 제목: ${it.title||'-'}`,
     `  브랜드: ${it.brand||'-'}`,
     `  본문: ${it.caption||'-'}`,
+    `  이미지 속 문구: ${it.imageCopy||'-'}`,
     `  훅: ${it.hook||'-'}`,
     `  CTA: ${it.cta||'-'}`,
     `  비주얼 메모: ${it.visualNotes||'-'}`,

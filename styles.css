@@ -825,101 +825,8 @@ body{font-size:13px;}
 
 
 /* =========================================================
-   v27 SIDE ACCORDION AI PANEL
-   - 19의 AI 기능/데이터 로직 유지
-   - 24 스타일 UI 유지
-   - 오른쪽 접힌 아코디언 버튼 → 클릭 시 우측에서 슬라이드 인
+   v40 AI 패널 — 오른쪽 슬라이드 오버레이 대신 보드 영역을 그대로 대체
    ========================================================= */
-#ai-tab{
-  position:fixed!important;
-  top:82px!important;
-  right:0!important;
-  bottom:22px!important;
-  width:min(430px, calc(100vw - 46px))!important;
-  z-index:90!important;
-  display:flex!important;
-  flex-direction:column!important;
-  gap:14px!important;
-  overflow-y:auto!important;
-  padding:14px!important;
-  background:rgba(255,255,255,.92)!important;
-  border:1px solid rgba(0,0,0,.08)!important;
-  border-right:0!important;
-  border-radius:24px 0 0 24px!important;
-  box-shadow:0 22px 70px rgba(15,23,42,.18)!important;
-  backdrop-filter:blur(22px) saturate(160%)!important;
-  -webkit-backdrop-filter:blur(22px) saturate(160%)!important;
-  transform:translateX(calc(100% + 18px))!important;
-  opacity:.98!important;
-  pointer-events:none!important;
-  transition:transform .34s cubic-bezier(.22,1,.36,1), box-shadow .25s ease!important;
-}
-#ai-tab.active{
-  transform:translateX(0)!important;
-  pointer-events:auto!important;
-}
-#ai-side-handle{
-  position:fixed;
-  right:0;
-  top:50%;
-  transform:translateY(-50%);
-  z-index:91;
-  width:86px;
-  min-height:54px;
-  padding:10px 12px 10px 10px;
-  border:1px solid rgba(0,0,0,.08);
-  border-right:0;
-  border-radius:18px 0 0 18px;
-  background:rgba(255,255,255,.94);
-  box-shadow:0 10px 34px rgba(15,23,42,.16);
-  backdrop-filter:blur(18px) saturate(160%);
-  -webkit-backdrop-filter:blur(18px) saturate(160%);
-  color:#111827;
-  font-family:var(--fn);
-  font-size:12px;
-  font-weight:800;
-  letter-spacing:-.1px;
-  cursor:pointer;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  flex-direction:row;
-  gap:6px;
-  white-space:nowrap;
-  writing-mode:horizontal-tb;
-  text-orientation:mixed;
-  transition:transform .34s cubic-bezier(.22,1,.36,1), background .15s ease, color .15s ease, box-shadow .15s ease;
-}
-#ai-side-handle:hover{
-  background:#fff;
-  color:var(--accent);
-  box-shadow:0 14px 42px rgba(15,23,42,.20);
-}
-#ai-side-handle .handle-mark{
-  writing-mode:horizontal-tb;
-  font-size:16px;
-  line-height:1;
-  color:var(--accent);
-  transform:none;
-}
-body.ai-panel-open #ai-side-handle{
-  transform:translateY(-50%) translateX(120%);
-  opacity:0;
-  pointer-events:none;
-}
-@media(max-width:520px){
-  #ai-side-handle{
-    width:78px;
-    min-height:50px;
-    font-size:11px;
-    padding:9px 10px;
-  }
-  body.ai-panel-open #ai-side-handle{
-    transform:translateY(-50%) translateX(120%);
-    opacity:0;
-    pointer-events:none;
-  }
-}
 #ai-tab .ai-floating-head{
   position:sticky;
   top:0;
@@ -929,9 +836,7 @@ body.ai-panel-open #ai-side-handle{
   justify-content:space-between;
   gap:10px;
   padding:4px 4px 8px;
-  background:linear-gradient(to bottom,rgba(255,255,255,.98),rgba(255,255,255,.80));
-  backdrop-filter:blur(16px);
-  -webkit-backdrop-filter:blur(16px);
+  background:linear-gradient(to bottom,var(--bg),rgba(0,0,0,0));
 }
 #ai-tab .ai-floating-title{
   display:flex;
@@ -941,16 +846,16 @@ body.ai-panel-open #ai-side-handle{
 #ai-tab .ai-floating-title strong{
   font-size:15px;
   letter-spacing:-.25px;
-  color:#111827;
+  color:var(--t1);
 }
 #ai-tab .ai-floating-title span{
   font-size:11px;
-  color:#7b8190;
+  color:var(--t3);
 }
 #ai-floating-close{
   border:0;
-  background:#f2f4f7;
-  color:#4b5563;
+  background:var(--s3);
+  color:var(--t2);
   width:32px;
   height:32px;
   border-radius:50%;
@@ -959,28 +864,12 @@ body.ai-panel-open #ai-side-handle{
   line-height:1;
   transition:all .15s;
 }
-#ai-floating-close:hover{background:#e9edf3;color:#111827;}
-#ai-tab .ai-panel{
-  border-radius:20px!important;
-  padding:18px!important;
-  background:rgba(255,255,255,.94)!important;
-}
-#ai-tab .ai-target-selector{max-height:210px!important;}
-#ai-tab .ai-result-area{max-height:420px!important;}
+#ai-floating-close:hover{background:var(--s4);color:var(--t1);}
+#ai-tab .ai-target-selector{max-height:260px;}
+#ai-tab .ai-result-area{max-height:none;}
 #ai-tab .ai-run-btn{width:100%;}
-@media(max-width:768px){
-  #ai-tab{
-    top:70px!important;
-    bottom:12px!important;
-    width:calc(100vw - 48px)!important;
-    border-radius:22px 0 0 22px!important;
-  }
-  #ai-side-handle{
-    min-height:118px;
-    width:38px;
-    font-size:11px;
-  }
-}
+#ai-tab .ai-panel{max-width:640px;margin:0 auto;width:100%;}
+
 
 
 

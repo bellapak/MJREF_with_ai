@@ -36,6 +36,7 @@
   <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
   <button class="tb-btn" id="gdrive-save-btn"    onclick="saveToDrive()">Drive 저장</button>
   <button class="tb-btn" id="gdrive-load-btn"    onclick="loadFromDrive()">Drive 불러오기</button>
+  <button class="tb-btn" id="delete-all-btn" style="color:var(--red);border-color:rgba(255,69,58,.35);" onclick="deleteAllItems()" title="모아둔 레퍼런스를 전체 삭제">전체 삭제</button>
 
   <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
   <!-- Google Drive 상태 표시 -->
@@ -195,12 +196,6 @@
   </div>
 </div>
 
-<!-- RIGHT SIDE AI ACCORDION HANDLE -->
-<button id="ai-side-handle" onclick="toggleAiPanel()" title="AI 분석 패널 열기">
-  <span class="handle-mark">‹</span>
-  <span class="handle-label">AI 분석</span>
-</button>
-
 <!-- ADD MODAL -->
 <div class="modal-overlay" id="add-modal" onclick="if(event.target.id==='add-modal')closeModal('add-modal')">
   <div class="modal-box">
@@ -285,6 +280,10 @@
         <label class="form-label">본문 / 캡션 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(AI 분석 핵심 입력값)</span></label>
         <textarea class="form-input soft" id="add-caption" rows="4" placeholder="원문 캡션, 광고 카피, 해시태그를 그대로 넣어주세요."></textarea>
         <div class="field-helper">Make/Snippit에서 description, text, caption 값이 들어오면 이 칸으로 매핑합니다.</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">이미지 카피 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(이미지 안에 적힌 문구)</span></label>
+        <textarea class="form-input soft" id="add-image-copy" rows="3" placeholder="이미지/썸네일 위에 실제로 적혀 있는 텍스트를 그대로 옮겨 적어주세요 (본문이 없는 이미지 전용 레퍼런스에 특히 유용해요)"></textarea>
       </div>
       <div class="form-grid-2">
         <div class="form-row">
