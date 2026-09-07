@@ -1149,7 +1149,10 @@ function startInlineTitleEdit(id, titleEl){
 
 function cardNode(it,index=0){
   const isPriority = currentView==='list' ? index < 8 : index < PRIORITY_CARD_COUNT;
-  const card=document.createElement('div'); card.className='ref-card'+(it.id===selectedId?' selected':''); card.onclick=()=>openDetail(it.id);
+  const card=document.createElement('div');
+  card.className='ref-card'+(it.id===selectedId?' selected':'');
+  card.dataset.itemId=String(it.id);
+  card.onclick=()=>openDetail(it.id);
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
   if(isDownloadableItem(it)){
     const dl=document.createElement('button');
@@ -1647,8 +1650,62 @@ function mountCarouselDetailMedia(it){
   });
 }
 
-function openDetail(id){ selectedId=id; renderBoard(); renderDetail(); $('detail-panel')?.classList.add('open'); }
-function closeDetail(){ selectedId=null; $('detail-panel')?.classList.remove('open'); renderBoard(); }
+function findBoardCardById(id){
+  const safeId=String(id||'');
+  return [...document.querySelectorAll('#board .ref-card')]
+    .find(card=>card.dataset.itemId===safeId)||null;
+}
+
+function openDetail(id){
+  const boardWrap=$('board-wrap');
+  const clickedCard=findBoardCardById(id);
+  const anchorTop=clickedCard?.getBoundingClientRect().top ?? null;
+  const fallbackScrollTop=boardWrap?.scrollTop ?? 0;
+
+  selectedId=id;
+
+  // 클릭한 카드 DOM을 유지해 사용자가 보고 있던 위치가 사라지지 않게 합니다.
+  document.querySelectorAll('#board .ref-card.selected')
+    .forEach(card=>card.classList.remove('selected'));
+  clickedCard?.classList.add('selected');
+
+  renderDetail();
+  $('detail-panel')?.classList.add('open');
+
+  // 패널이 열리며 카드 열 수가 바뀌어도 선택한 카드가 같은 화면 높이에 남도록 보정합니다.
+  if(boardWrap && clickedCard && anchorTop!==null){
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        const afterTop=clickedCard.getBoundingClientRect().top;
+        boardWrap.scrollTop += (afterTop-anchorTop);
+      });
+    });
+  }else if(boardWrap){
+    boardWrap.scrollTop=fallbackScrollTop;
+  }
+}
+
+function closeDetail(){
+  const boardWrap=$('board-wrap');
+  const currentCard=selectedId ? findBoardCardById(selectedId) : null;
+  const anchorTop=currentCard?.getBoundingClientRect().top ?? null;
+  const fallbackScrollTop=boardWrap?.scrollTop ?? 0;
+
+  selectedId=null;
+  $('detail-panel')?.classList.remove('open');
+  currentCard?.classList.remove('selected');
+
+  if(boardWrap && currentCard && anchorTop!==null){
+    requestAnimationFrame(()=>{
+      requestAnimationFrame(()=>{
+        const afterTop=currentCard.getBoundingClientRect().top;
+        boardWrap.scrollTop += (afterTop-anchorTop);
+      });
+    });
+  }else if(boardWrap){
+    boardWrap.scrollTop=fallbackScrollTop;
+  }
+}
 function renderDetailCatOptions(){ const it=items.find(i=>i.id===selectedId); const el=$('detail-cat-options'); if(!el||!it)return; if(!Array.isArray(it.catIds)) it.catIds=[]; el.innerHTML=buildGroupedDetailCategoryPickerHtml(it.catIds); el.querySelectorAll('.cat-option-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; it.catIds=it.catIds.includes(id)?it.catIds.filter(x=>x!==id):[...it.catIds,id]; saveData(); renderAll(); renderDetail();}); }
 
 function renderDetail(){
@@ -1761,18 +1818,50 @@ function saveApiKey(){ const p=$('ai-provider')?.value||'google'; const v=$('ai-
 function onProviderChange(){ const p=$('ai-provider')?.value||'google'; if($('ai-apikey-input')) $('ai-apikey-input').value=localStorage.getItem('refboard_ai_'+p)||''; if($('api-key-hint')) $('api-key-hint').textContent=PROVIDER_HINTS[p]||''; }
 
 // ─── AI Copywriting (본문 카피 / 이미지 카피 생성) ───
-const COPY_SYSTEM_PROMPT = `당신은 메타 광고(인스타그램/페이스북)와 SNS 콘텐츠를 전문으로 다루는 카피라이터입니다.
-입력으로 주어지는 레퍼런스(이미지와 텍스트 정보)의 톤, 문장 구조, 소구 포인트, 후킹 방식을 파악해서 그 스타일을 참고한 새로운 카피를 작성합니다.
-일부 레퍼런스는 본문 텍스트 없이 이미지와 "이미지 속 문구" 정보만 있을 수 있습니다. 이 경우 첨부된 이미지 자체와 이미지 속 문구를 근거로 톤과 스타일을 분석하세요.
-반드시 아래 두 섹션으로만 결과를 작성하고, 분석 코멘트나 다른 설명은 덧붙이지 마세요.
+const COPY_SYSTEM_PROMPT = `당신은 메타 광고·인스타그램·브랜드 SNS 콘텐츠를 전문으로 만드는 시니어 카피라이터입니다.
 
-[본문 카피]
-(인스타그램/메타 광고 게시물 본문 전체. 훅으로 시작해서 소구점을 설명하고 CTA로 마무리. 실제 게시글처럼 자연스러운 줄바꿈과 이모지 사용)
+이 작업의 핵심은 레퍼런스 문장을 그대로 따라 쓰는 것이 아니라, 선택된 레퍼런스들이 가진 "문장의 결"을 분석해서 새로운 콘텐츠 카피로 재구성하는 것입니다.
 
-[이미지 카피]
-(이미지 위에 짧게 얹을 문구 1~3개 제안. 각 문구는 12자 내외로 짧고 임팩트 있게, 줄바꿈으로 구분)
+레퍼런스에서 반드시 분석할 것:
+1. 문장 평균 길이와 호흡
+2. 첫 문장/첫 화면의 후킹 방식
+3. 어미와 말투
+4. 위트·도발·친근함·건조함 등 감정 온도
+5. 정보와 감정의 비율
+6. 줄바꿈과 리듬
+7. 제품/브랜드를 등장시키는 타이밍
+8. CTA의 직접성
+9. 본문, 이미지 속 문구, 훅, CTA, 비주얼 메모, 콘텐츠 메모에서 반복되는 표현 패턴
 
-한국어로 작성하고, 레퍼런스에 브랜드명이 있으면 자연스럽게 반영하되 과도하게 반복하지 마세요.`;
+중요한 우선순위:
+- 사용자가 입력한 "타겟"과 "카피 분위기"가 최우선입니다.
+- 그 다음 선택된 레퍼런스들의 공통된 문장 패턴을 적용합니다.
+- 특정 레퍼런스 한 개의 문장을 복사하거나 단어만 바꿔 재작성하지 마세요.
+- 레퍼런스의 고유 슬로건·브랜드 문구를 그대로 가져오지 마세요.
+- AIDA/PAS 같은 교과서형 광고 구조에 억지로 끼워 맞추지 말고 실제 선택 콘텐츠의 말투와 리듬을 우선하세요.
+- AI가 자주 쓰는 추상적 광고 표현과 상투어를 피하세요.
+- 레퍼런스에 없는 기능, 수치, 효능, 사실은 새로 만들지 마세요.
+- 이모지는 습관적으로 넣지 말고 레퍼런스와 요청 분위기에 맞을 때만 사용하세요.
+
+게시물 본문:
+- 선택된 레퍼런스의 본문/훅/CTA/콘텐츠 메모를 중심으로 문장 결을 벤치마킹합니다.
+- 이미지 문구를 그대로 반복하지 않습니다.
+- 이미지에서 생긴 관심을 이어 받아 맥락, 공감, 제품/콘텐츠 의미를 확장합니다.
+- 실제 SNS에서 읽히는 길이와 줄바꿈으로 작성합니다.
+- 필요할 때만 자연스럽게 CTA를 넣습니다.
+
+이미지 위 문구:
+- 선택된 레퍼런스의 이미지 속 문구/훅/비주얼 메모를 중심으로 벤치마킹합니다.
+- 1~2초 안에 읽히는 짧은 문장이어야 합니다.
+- 단순한 본문 축약본이 아니라 시각물과 함께 볼 때 의미가 완성되는 훅이어야 합니다.
+- 서로 다른 접근의 3개 안을 제안합니다.
+
+반드시 아래 JSON 형식 하나만 출력하세요. 마크다운 코드블록과 추가 설명은 금지합니다.
+{
+  "bodyCopy": "게시물 본문 전체",
+  "imageCopies": ["이미지 문구 1", "이미지 문구 2", "이미지 문구 3"],
+  "benchmarkSummary": "선택 레퍼런스에서 가져온 문장 리듬과 톤의 공통점을 1~2문장으로 설명"
+}`;
 
 async function blobToBase64(blob){
   return await new Promise((resolve,reject)=>{
@@ -1860,10 +1949,120 @@ async function callGeminiCopy(apiKey,systemPrompt,userPrompt,images){
   return (data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
 }
 
+function parseAiCopyPayload(text=''){
+  const raw=String(text||'').trim();
+  if(!raw) return null;
+
+  const cleaned=raw
+    .replace(/^```(?:json)?\s*/i,'')
+    .replace(/\s*```$/,'')
+    .trim();
+
+  const candidates=[cleaned];
+  const firstBrace=cleaned.indexOf('{');
+  const lastBrace=cleaned.lastIndexOf('}');
+  if(firstBrace>=0 && lastBrace>firstBrace){
+    candidates.push(cleaned.slice(firstBrace,lastBrace+1));
+  }
+
+  for(const candidate of candidates){
+    try{
+      const data=JSON.parse(candidate);
+      if(data && typeof data==='object'){
+        return {
+          bodyCopy:String(data.bodyCopy||'').trim(),
+          imageCopies:Array.isArray(data.imageCopies)
+            ? data.imageCopies.map(v=>String(v||'').trim()).filter(Boolean)
+            : [],
+          benchmarkSummary:String(data.benchmarkSummary||'').trim()
+        };
+      }
+    }catch(e){}
+  }
+  return null;
+}
+
+async function copyTextToClipboard(text){
+  try{
+    await navigator.clipboard.writeText(String(text||''));
+    showToast('카피를 복사했어요','success');
+  }catch(e){
+    console.warn(e);
+    showToast('복사에 실패했어요','error');
+  }
+}
+
 function renderAiCopyResult(text){
   const res=$('ai-single-result'); if(!res) return;
   res.classList.add('open');
-  res.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7;">${esc(text)}</div>`;
+
+  const data=parseAiCopyPayload(text);
+  if(!data){
+    res.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7;">${esc(text)}</div>`;
+    return;
+  }
+
+  res.innerHTML='';
+  const wrap=document.createElement('div');
+  wrap.className='copy-result-wrap';
+
+  if(data.benchmarkSummary){
+    const intro=document.createElement('div');
+    intro.className='copy-result-intro';
+    intro.innerHTML=`<strong>이번 생성에 적용한 레퍼런스 결</strong><p>${esc(data.benchmarkSummary)}</p>`;
+    wrap.appendChild(intro);
+  }
+
+  const bodyCard=document.createElement('section');
+  bodyCard.className='copy-result-card';
+  bodyCard.innerHTML=`
+    <div class="copy-result-card-head">
+      <div class="copy-result-card-title">
+        <strong>게시물 본문</strong>
+        <span>이미지에서 생긴 관심을 이어가는 전체 캡션</span>
+      </div>
+      <div class="copy-result-actions">
+        <button type="button" class="copy-result-copy-btn">복사</button>
+      </div>
+    </div>
+    <div class="copy-result-text">${esc(data.bodyCopy||'생성된 본문이 없습니다.')}</div>
+  `;
+  bodyCard.querySelector('.copy-result-copy-btn').onclick=()=>copyTextToClipboard(data.bodyCopy);
+  wrap.appendChild(bodyCard);
+
+  const imageCard=document.createElement('section');
+  imageCard.className='copy-result-card';
+  imageCard.innerHTML=`
+    <div class="copy-result-card-head">
+      <div class="copy-result-card-title">
+        <strong>이미지 위 문구</strong>
+        <span>본문 축약이 아니라 스크롤을 멈추게 하는 짧은 훅</span>
+      </div>
+    </div>
+    <div class="image-copy-options"></div>
+  `;
+
+  const optionWrap=imageCard.querySelector('.image-copy-options');
+  const copies=data.imageCopies.length ? data.imageCopies : ['생성된 이미지 문구가 없습니다.'];
+  copies.forEach(copy=>{
+    const row=document.createElement('div');
+    row.className='image-copy-option';
+
+    const span=document.createElement('span');
+    span.textContent=copy;
+
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='copy-result-copy-btn';
+    btn.textContent='복사';
+    btn.onclick=()=>copyTextToClipboard(copy);
+
+    row.append(span,btn);
+    optionWrap.appendChild(row);
+  });
+
+  wrap.appendChild(imageCard);
+  res.appendChild(wrap);
 }
 
 async function runCopyGeneration(){
@@ -1875,16 +2074,39 @@ async function runCopyGeneration(){
   const chosen=[...aiSelectedIds].map(id=>items.find(i=>i.id===id)).filter(Boolean);
   if(!chosen.length){ showToast('참고할 레퍼런스를 1개 이상 선택해주세요','error'); return; }
 
+  const target=($('ai-copy-target')?.value||'').trim();
+  const mood=($('ai-copy-mood')?.value||'').trim();
+  const brief=($('ai-copy-brief')?.value||'').trim();
+
+  localStorage.setItem('refboard_copy_target',target);
+  localStorage.setItem('refboard_copy_mood',mood);
+  localStorage.setItem('refboard_copy_brief',brief);
+
   const runBtn=$('ai-run-btn');
   if(runBtn){ runBtn.disabled=true; runBtn.textContent='✦ 생성 중...'; }
   res.classList.add('open');
-  res.innerHTML='카피를 생성하고 있어요...';
+  res.innerHTML='선택한 레퍼런스의 문장 결을 분석하고 있어요...';
 
   try{
     const images=await collectAiReferenceImages(chosen);
-    const brief=($('ai-copy-brief')?.value||'').trim();
     const refText=buildAiReferenceText(chosen);
-    const userPrompt=`다음은 참고할 레퍼런스 정보입니다 (총 ${chosen.length}개, 이미지 ${images.length}개 첨부).\n\n${refText}\n\n${brief?`추가 요청사항: ${brief}\n\n`:''}위 레퍼런스의 톤과 구조를 참고해서 새로운 [본문 카피]와 [이미지 카피]를 작성해주세요.`;
+
+    const userPrompt=`다음 ${chosen.length}개의 레퍼런스를 벤치마킹해서 완전히 새로운 콘텐츠 카피를 작성하세요.
+첨부 이미지: ${images.length}개
+
+[생성 조건]
+타겟: ${target||'명시되지 않음 — 레퍼런스와 콘텐츠 맥락에서 가장 자연스러운 타겟을 추론'}
+카피 분위기: ${mood||'명시되지 않음 — 선택 레퍼런스의 공통 톤을 분석해 적용'}
+추가 요청사항: ${brief||'없음'}
+
+[선택 레퍼런스]
+${refText}
+
+먼저 레퍼런스들의 공통된 문장 길이, 리듬, 어미, 후킹 방식, 감정 온도, 정보 밀도를 내부적으로 분석하세요.
+그 분석을 바탕으로 게시물 본문과 이미지 위 문구를 서로 다른 역할로 새롭게 작성하세요.
+원문을 복사하거나 단어만 바꾼 유사 문장을 만들지 마세요.
+응답은 지정된 JSON 형식만 반환하세요.`;
+
     const text=await requestAiCompletion(provider,apiKey,COPY_SYSTEM_PROMPT,userPrompt,images);
     renderAiCopyResult(text||'생성된 카피가 없습니다. 다시 시도해주세요.');
   }catch(e){
@@ -1909,6 +2131,11 @@ window.addEventListener('DOMContentLoaded',()=>{
 
   renderAll();
   onProviderChange();
+
+  if($('ai-copy-target')) $('ai-copy-target').value=localStorage.getItem('refboard_copy_target')||'';
+  if($('ai-copy-mood')) $('ai-copy-mood').value=localStorage.getItem('refboard_copy_mood')||'';
+  if($('ai-copy-brief')) $('ai-copy-brief').value=localStorage.getItem('refboard_copy_brief')||'';
+
   updateDriveUi();
 
   // 캐시된 Drive 권한이 있으면 누락된 이미지 연결을 자동 복구합니다.

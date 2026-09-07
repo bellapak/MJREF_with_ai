@@ -343,7 +343,7 @@ body{background:var(--bg);color:var(--t1);font-family:var(--fn);font-size:13px;-
 
 /* ─── DETAIL PANEL ─── */
 #detail-panel{
-  width:265px;
+  width:354px;
   background:rgba(17,17,17,0.85);
   backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);
   border-left:1px solid var(--glass-border);
@@ -351,7 +351,7 @@ body{background:var(--bg);color:var(--t1);font-family:var(--fn);font-size:13px;-
   flex-shrink:0;overflow-y:auto;
 }
 #detail-panel.open{display:flex;}
-#detail-panel img,#detail-panel video{width:100%;border-radius:10px;max-height:200px;object-fit:contain;background:var(--s3);}
+#detail-panel img,#detail-panel video{width:100%;border-radius:10px;max-height:270px;object-fit:contain;background:var(--s3);}
 #detail-close{background:rgba(255,255,255,0.08);border:none;color:rgba(235,235,245,0.5);cursor:pointer;font-size:16px;align-self:flex-end;padding:2px 8px;line-height:1;border-radius:6px;transition:all .15s;}
 #detail-close:hover{background:rgba(255,255,255,0.14);color:var(--t1);}
 .detail-section-title{font-size:10px;color:rgba(235,235,245,0.35);letter-spacing:.08em;font-family:var(--fn);font-weight:600;text-transform:uppercase;padding:4px 0 2px;}
@@ -1097,3 +1097,92 @@ body{font-size:13px;}
 #detail-media{position:relative;}
 #ai-tab:not(.active) .ai-target-card img,
 #ai-tab:not(.active) .ai-target-card video{display:none!important;}
+
+
+/* =========================================================
+   v41 — 상세 패널 확장 + 레퍼런스 기반 카피 생성 UX
+   ========================================================= */
+@media(min-width:769px){
+  #detail-panel{
+    width:354px;
+    min-width:354px;
+    max-width:min(40vw,430px);
+    padding:18px;
+  }
+  #detail-panel img,
+  #detail-panel video{max-height:270px;}
+}
+
+.copy-generation-context{
+  margin:14px 0;
+  padding:14px;
+  border:1px solid var(--glass-border);
+  border-radius:16px;
+  background:linear-gradient(180deg,rgba(0,100,255,.045),rgba(255,255,255,.7));
+}
+.copy-context-head{margin-bottom:12px;}
+.copy-context-head strong{
+  display:block;color:var(--t1);font-size:12px;font-weight:800;letter-spacing:-.15px;
+}
+.copy-context-head span{
+  display:block;margin-top:4px;color:var(--t2);font-size:10.5px;line-height:1.55;
+}
+.copy-context-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+.copy-context-grid .form-row{margin-bottom:0;}
+.copy-brief-row{margin:10px 0 0;}
+.copy-optional{color:var(--t3);font-weight:500;text-transform:none;}
+#ai-copy-target,#ai-copy-mood{min-height:40px;}
+
+.copy-result-wrap{display:flex;flex-direction:column;gap:12px;}
+.copy-result-intro{
+  padding:10px 12px;border-radius:12px;
+  background:rgba(0,100,255,.055);
+  border:1px solid rgba(0,100,255,.12);
+}
+.copy-result-intro strong{
+  display:block;color:var(--accent);font-size:11px;margin-bottom:4px;
+}
+.copy-result-intro p{
+  color:var(--t2);font-size:11px;line-height:1.6;margin:0;
+}
+.copy-result-card{
+  position:relative;padding:15px;
+  border:1px solid var(--glass-border);
+  border-radius:15px;background:var(--s1);
+}
+.copy-result-card-head{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:10px;margin-bottom:10px;
+}
+.copy-result-card-title{display:flex;flex-direction:column;gap:2px;}
+.copy-result-card-title strong{color:var(--t1);font-size:12px;font-weight:800;}
+.copy-result-card-title span{color:var(--t3);font-size:9.5px;}
+.copy-result-text{
+  white-space:pre-wrap;color:var(--t1);font-size:12px;line-height:1.85;word-break:keep-all;
+}
+.copy-result-actions{display:flex;gap:6px;}
+.copy-result-copy-btn{
+  border:1px solid rgba(0,0,0,.07);background:#f2f4f7;color:#4b5563;
+  border-radius:9px;padding:5px 8px;font-family:var(--fn);font-size:10px;
+  font-weight:700;cursor:pointer;
+}
+.copy-result-copy-btn:hover{
+  color:var(--accent);border-color:rgba(0,100,255,.2);background:rgba(0,100,255,.06);
+}
+.image-copy-options{display:flex;flex-direction:column;gap:7px;}
+.image-copy-option{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 10px;border:1px solid rgba(0,0,0,.07);
+  border-radius:11px;background:#f7f8fa;
+}
+.image-copy-option span{
+  color:var(--t1);font-size:12px;font-weight:700;line-height:1.45;
+}
+
+@media(max-width:768px){
+  .copy-context-grid{grid-template-columns:1fr;}
+}
