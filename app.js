@@ -182,9 +182,9 @@ function loadLocal(){
 function makePersistableState(){
   const cleanItem=(it)=>{
     const o={...it};
-    delete o._file; delete o.previewSrc;
+    delete o._file; delete o.previewSrc; delete o._uploading;
     if(typeof o.src==='string' && o.src.startsWith('blob:')) o.src='';
-    if(Array.isArray(o.carousel)) o.carousel=o.carousel.map(sl=>{ const s={...sl}; delete s._file; delete s.previewSrc; if(typeof s.src==='string' && s.src.startsWith('blob:')) s.src=''; return s; });
+    if(Array.isArray(o.carousel)) o.carousel=o.carousel.map(sl=>{ const s={...sl}; delete s._file; delete s.previewSrc; delete s._uploading; if(typeof s.src==='string' && s.src.startsWith('blob:')) s.src=''; return s; });
     return o;
   };
   normalizeCategoryGroups();
@@ -339,7 +339,7 @@ async function listDriveFiles(parentId){
   const q=[`'${parentId}' in parents`,`trashed=false`].join(' and ');
   let files=[]; let pageToken='';
   do{
-    const url='https://www.googleapis.com/drive/v3/files?spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true&fields='+encodeURIComponent('nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,parents,thumbnailLink,webContentLink)')+'&pageSize=1000&q='+encodeURIComponent(q)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
+    const url='https://www.googleapis.com/drive/v3/files?spaces=drive&supportsAllDrives=true&includeItemsFromAllDrives=true&fields='+encodeURIComponent('nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,parents,thumbnailLink,webContentLink,md5Checksum)')+'&pageSize=1000&q='+encodeURIComponent(q)+(pageToken?'&pageToken='+encodeURIComponent(pageToken):'');
     const json=await (await driveFetch(url)).json();
     files=files.concat(json.files||[]); pageToken=json.nextPageToken||'';
   }while(pageToken);
@@ -364,28 +364,38 @@ function fileToDriveItem(f){
   return normalizeItem({id:'d'+f.id,title:f.name,type:(f.mimeType||'').startsWith('video/')?'video':'image',driveFileId:f.id,mimeType:f.mimeType,fileName:f.name,thumbnailLink:f.thumbnailLink||'',ts:f.modifiedTime?Date.parse(f.modifiedTime):Date.now(),sourceType:'drive_assets'});
 }
 
+let _ensureDriveFolderPromise=null;
 async function ensureDriveFolder(){
   if(gdriveFolderId) return gdriveFolderId;
-  let folder=await findDriveFile(DRIVE_ROOT_FOLDER_NAME,'application/vnd.google-apps.folder');
-  if(!folder){
-    const meta={name:DRIVE_ROOT_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'};
-    folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)})).json();
-  }
-  gdriveFolderId=folder.id;
-  const data=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId); if(data) gdriveDataFileId=data.id;
-  return gdriveFolderId;
+  if(_ensureDriveFolderPromise) return _ensureDriveFolderPromise; // 동시 호출 시 폴더가 2개 생기는 것 방지
+  _ensureDriveFolderPromise=(async()=>{
+    let folder=await findDriveFile(DRIVE_ROOT_FOLDER_NAME,'application/vnd.google-apps.folder');
+    if(!folder){
+      const meta={name:DRIVE_ROOT_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'};
+      folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)})).json();
+    }
+    gdriveFolderId=folder.id;
+    const data=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId); if(data) gdriveDataFileId=data.id;
+    return gdriveFolderId;
+  })();
+  try{ return await _ensureDriveFolderPromise; } finally{ _ensureDriveFolderPromise=null; }
 }
 
+let _ensureAssetFolderPromise=null;
 async function ensureAssetFolder(){
   if(gdriveAssetFolderId) return gdriveAssetFolderId;
-  const rootId=await ensureDriveFolder();
-  let folder=await findDriveFile(DRIVE_ASSET_FOLDER_NAME,'application/vnd.google-apps.folder',rootId);
-  if(!folder){
-    const meta={name:DRIVE_ASSET_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder',parents:[rootId]};
-    folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)})).json();
-  }
-  gdriveAssetFolderId=folder.id;
-  return gdriveAssetFolderId;
+  if(_ensureAssetFolderPromise) return _ensureAssetFolderPromise; // 동시 호출 시 폴더가 2개 생기는 것 방지
+  _ensureAssetFolderPromise=(async()=>{
+    const rootId=await ensureDriveFolder();
+    let folder=await findDriveFile(DRIVE_ASSET_FOLDER_NAME,'application/vnd.google-apps.folder',rootId);
+    if(!folder){
+      const meta={name:DRIVE_ASSET_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder',parents:[rootId]};
+      folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(meta)})).json();
+    }
+    gdriveAssetFolderId=folder.id;
+    return gdriveAssetFolderId;
+  })();
+  try{ return await _ensureAssetFolderPromise; } finally{ _ensureAssetFolderPromise=null; }
 }
 
 async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
@@ -420,21 +430,34 @@ async function saveToDrive(silent=false){
       persistDeletedDriveIds(new Set());
     }
 
-    await Promise.all(items.map(async it=>{
-      if(!it.driveFileId && it._file){
+    // ⚠️ 경쟁 조건 방지: saveData()가 짧은 간격으로 여러 번 호출되면 saveToDrive()도 겹쳐서 실행될 수 있음.
+    // 업로드 대상 목록을 동기적으로(await 이전에) 뽑아 즉시 _uploading 플래그를 세워두면,
+    // 겹쳐 실행된 다른 saveToDrive() 호출이 같은 파일을 또 업로드해서 Drive에 중복 파일이
+    // 생기는 것을 막을 수 있음(await 지점 전까지는 다른 코드가 끼어들 수 없다는 점을 이용).
+    const pendingItems=items.filter(it=>!it.driveFileId && it._file && !it._uploading);
+    pendingItems.forEach(it=>{ it._uploading=true; });
+    const pendingSlides=[];
+    items.forEach(it=>{
+      if(Array.isArray(it.carousel)){
+        it.carousel.forEach(slide=>{
+          if(!slide.driveFileId && slide._file && !slide._uploading){ slide._uploading=true; pendingSlides.push(slide); }
+        });
+      }
+    });
+
+    await Promise.all(pendingItems.map(async it=>{
+      try{
         const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
         it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; it.thumbnailLink=f.thumbnailLink||it.thumbnailLink||'';
         delete it._file;
-      }
-      if(Array.isArray(it.carousel)){
-        for(const slide of it.carousel){
-          if(!slide.driveFileId && slide._file){
-            const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png');
-            slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||'';
-            delete slide._file;
-          }
-        }
-      }
+      }finally{ delete it._uploading; }
+    }));
+    await Promise.all(pendingSlides.map(async slide=>{
+      try{
+        const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png');
+        slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||'';
+        delete slide._file;
+      }finally{ delete slide._uploading; }
     }));
     await uploadDataFile(); 
     saveLocal(); 
@@ -493,17 +516,41 @@ async function syncItemsWithDriveAssets(){
     }
   }
 
+  // 📎 완전히 동일한 파일(MD5 체크섬 일치)을 가리키는 아이템이 이미 2개 이상 있으면 하나로 병합.
+  // 예전 버전에서 업로드가 겹쳐 실행되어 같은 사진이 Drive에 2벌 저장된 경우를 자동으로 정리.
+  // 태그(catIds)는 합쳐서 보존하고, 나머지 항목만 제거함.
+  let merged=0;
+  {
+    const seenByMd5=new Map();
+    const toRemove=new Set();
+    items.forEach(it=>{
+      const md5=byId.get(it.driveFileId)?.md5Checksum;
+      if(!md5) return;
+      const keeper=seenByMd5.get(md5);
+      if(!keeper){ seenByMd5.set(md5,it); return; }
+      const mergedCats=new Set([...(keeper.catIds||[]),...(it.catIds||[])]);
+      keeper.catIds=[...mergedCats];
+      if(!keeper.caption && it.caption) keeper.caption=it.caption;
+      toRemove.add(it.id);
+    });
+    if(toRemove.size){ items=items.filter(it=>!toRemove.has(it.id)); merged=toRemove.size; }
+  }
+
   const existing=new Set();
+  const existingMd5=new Set();
   items.forEach(it=>{
-    if(it.driveFileId) existing.add(it.driveFileId);
-    if(Array.isArray(it.carousel)) it.carousel.forEach(s=>{ if(s.driveFileId) existing.add(s.driveFileId); });
+    if(it.driveFileId){ existing.add(it.driveFileId); const f=byId.get(it.driveFileId); if(f?.md5Checksum) existingMd5.add(f.md5Checksum); }
+    if(Array.isArray(it.carousel)) it.carousel.forEach(s=>{ if(s.driveFileId){ existing.add(s.driveFileId); const f=byId.get(s.driveFileId); if(f?.md5Checksum) existingMd5.add(f.md5Checksum); } });
   });
   files.forEach(f=>{
-    if(!existing.has(f.id)){ items.push(fileToDriveItem(f)); existing.add(f.id); added++; }
+    if(existing.has(f.id)) return;
+    // 파일 ID는 다르지만 이미 등록된 아이템과 내용이 완전히 같은 파일(중복 업로드된 사본)이면 새로 추가하지 않음.
+    if(f.md5Checksum && existingMd5.has(f.md5Checksum)) return;
+    items.push(fileToDriveItem(f)); existing.add(f.id); if(f.md5Checksum) existingMd5.add(f.md5Checksum); added++;
   });
   buildCarouselGroupsFromLooseAssets();
   removeItemsThatAreCarouselSlides();
-  return {linked,added,total:files.length};
+  return {linked,added,merged,total:files.length};
 }
 
 async function loadFromDrive(){
@@ -524,7 +571,7 @@ async function loadFromDrive(){
     ensureDefaultTaxonomy();
     saveLocal();
     renderAll();
-    showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
+    showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
   }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
 }
 
@@ -2231,7 +2278,7 @@ window.addEventListener('DOMContentLoaded',()=>{
       syncItemsWithDriveAssets()
         .then(sync=>{
           const cleaned=repairAndPruneMediaItems();
-          if(sync.linked||sync.added||cleaned.linked||cleaned.removed){ saveLocal(); renderAll(); }
+          if(sync.linked||sync.added||sync.merged||cleaned.linked||cleaned.removed){ saveLocal(); renderAll(); }
         })
         .catch(err=>console.warn('Drive 미디어 자동 연결 생략:',err));
     });
