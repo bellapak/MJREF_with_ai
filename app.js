@@ -521,6 +521,7 @@ async function loadFromDrive(){
     items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
+    ensureDefaultTaxonomy();
     saveLocal();
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개`,'success');
@@ -1261,6 +1262,91 @@ function groupByCategories(){
   const ungrouped=[];
   categories.forEach(c=>{ const gid=getCategoryGroupId(c); if(gid && map.has(gid)) map.get(gid).push(c); else ungrouped.push(c); });
   return {map,ungrouped};
+}
+
+// ─── 기본 대분류/소분류 태그 체계 (광고/콘텐츠/비주얼/UX/UI/카피) ───
+const TAXONOMY_MIGRATION_KEY='refboard_taxonomy_migration_v1';
+const DEFAULT_GROUPS=[
+  {id:'g-ad',name:'광고',color:'#ff6b35'},
+  {id:'g-content',name:'콘텐츠',color:'#00d4d4'},
+  {id:'g-visual',name:'비주얼',color:'#7b5cfa'},
+  {id:'g-ux',name:'UX',color:'#3bfa8a'},
+  {id:'g-ui',name:'UI',color:'#3b9eff'},
+  {id:'g-copy',name:'카피',color:'#ff3b8b'}
+];
+const DEFAULT_CATEGORIES=[
+  // 광고
+  {id:'c-ad-meta',name:'Meta 광고',groupId:'g-ad',color:'#ff6b35',legacy:['Meta 광고','메타광고']},
+  {id:'c-ad-shopping',name:'쇼핑/검색광고',groupId:'g-ad',color:'#ff8b5c',legacy:['쇼핑광고','쇼핑/검색광고','네이버쇼핑/검색광고/기타']},
+  {id:'c-ad-youtube',name:'유튜브 광고',groupId:'g-ad',color:'#ffaa3b',legacy:['YouTube 광고','유튜브광고']},
+  {id:'c-ad-tiktok',name:'틱톡 광고',groupId:'g-ad',color:'#ff5555',legacy:['TikTok 광고','Tiktok 광고']},
+  {id:'c-ad-promo',name:'할인/프로모션',groupId:'g-ad',color:'#ffd23b',legacy:['할인','할인소구','프로모션','기획전/프로모션','캠페인/프로모션']},
+  // 콘텐츠
+  {id:'c-ct-insta',name:'인스타/릴스',groupId:'g-content',color:'#00d4d4',legacy:['인스타그램','Reels/숏폼','릴스/숏폼영상','숏폼']},
+  {id:'c-ct-youtube',name:'유튜브 콘텐츠',groupId:'g-content',color:'#3bd4c4',legacy:['YouTube 콘텐츠','유튜브콘텐츠']},
+  {id:'c-ct-blog',name:'블로그/아티클',groupId:'g-content',color:'#3bfae0',legacy:['Blog/아티클','블로그/아티클']},
+  {id:'c-ct-meme',name:'밈·유머',groupId:'g-content',color:'#8be8e8',legacy:['밈/유머코드','밈']},
+  {id:'c-ct-review',name:'리뷰/UGC',groupId:'g-content',color:'#5cdada',legacy:['리뷰','리뷰/UGC','후기']},
+  {id:'c-ct-collab',name:'협찬/바이럴',groupId:'g-content',color:'#20b8b8',legacy:['협찬','협찬/인플루언서','바이럴','바이럴/참여형','콜라보']},
+  {id:'c-ct-season',name:'시즌/기념일',groupId:'g-content',color:'#00a0a0',legacy:['시즌','시즌/기념일']},
+  // 비주얼
+  {id:'c-vs-mood',name:'무드/레이아웃',groupId:'g-visual',color:'#7b5cfa',legacy:['비주얼','무드/비주얼','레이아웃']},
+  {id:'c-vs-shoot',name:'촬영/연출',groupId:'g-visual',color:'#9b7cfa',legacy:['촬영/구도','촬영/연출','촬영연출','파인/일몰','소품/배경','상황/분위기','상황/무드']},
+  {id:'c-vs-cut',name:'제품·라이프스타일컷',groupId:'g-visual',color:'#a88bfa',legacy:['제품컷','사용컷','라이프스타일컷','디테일컷']},
+  {id:'c-vs-new',name:'신제품/패키지',groupId:'g-visual',color:'#6b4cd8',legacy:['신제품','신제품/패키지']},
+  // UX
+  {id:'c-ux-page',name:'랜딩/상세페이지',groupId:'g-ux',color:'#3bfa8a',legacy:['웹사이트 페이지','웹사이트 구조','랜딩페이지','랜딩 페이지','상세페이지','PDP/상세페이지']},
+  {id:'c-ux-event',name:'이벤트/쿠폰',groupId:'g-ux',color:'#6bfa9b',legacy:['이벤트프로모션','이벤트 프로모션','이벤트 페이지','쿠폰']},
+  {id:'c-ux-offline',name:'오프라인/공간',groupId:'g-ux',color:'#20d466',legacy:['팝업','팝업스토어','오프라인팝업','오프라인/공간','매장진열','부스/전시','포토존','VMD']},
+  // UI
+  {id:'c-ui-banner',name:'배너/팝업 UI',groupId:'g-ui',color:'#3b9eff',legacy:['쿠폰/혜택 UI']},
+  {id:'c-ui-button',name:'버튼/CTA UI',groupId:'g-ui',color:'#6bb8ff',legacy:[]},
+  // 카피
+  {id:'c-cp-headline',name:'헤드라인/훅',groupId:'g-copy',color:'#ff3b8b',legacy:[]},
+  {id:'c-cp-body',name:'바디카피',groupId:'g-copy',color:'#ff6ba8',legacy:['카피','카피/문구']},
+  {id:'c-cp-cta',name:'CTA 문구',groupId:'g-copy',color:'#ff8bc0',legacy:[]},
+  {id:'c-cp-hashtag',name:'해시태그',groupId:'g-copy',color:'#ffabd0',legacy:[]},
+  {id:'c-cp-legal',name:'법적고지/공지문구',groupId:'g-copy',color:'#d81e6b',legacy:[]}
+];
+// 기존에 세분화되어 있던 카테고리를 새 대분류 체계로 1회 통합 마이그레이션.
+// - groups/categories가 비어 있으면 기본 세트를 그대로 시드.
+// - 기존 카테고리가 있으면: 새 그룹/카테고리를 추가하고, 옛 이름과 일치하는 카테고리는
+//   해당 소분류로 아이템을 재배정한 뒤 옛 카테고리를 제거. 매칭되지 않는 커스텀 카테고리는 그대로 둠.
+// - 한 번만 실행되도록 localStorage 플래그로 관리(이후 사용자가 기본 태그를 지워도 되살아나지 않음).
+function ensureDefaultTaxonomy(){
+  try{
+    if(localStorage.getItem(TAXONOMY_MIGRATION_KEY)) return false;
+    const existingGroupNames=new Set(groups.map(g=>normalizeCatPickerName(g.name||'')));
+    DEFAULT_GROUPS.forEach(dg=>{
+      if(groups.some(g=>g.id===dg.id)) return;
+      if(existingGroupNames.has(normalizeCatPickerName(dg.name))) return;
+      groups.push({id:dg.id,name:dg.name,color:dg.color});
+    });
+    const existingCatNames=new Set(categories.map(c=>normalizeCatPickerName(c.name||'')));
+    DEFAULT_CATEGORIES.forEach(dc=>{
+      if(categories.some(c=>c.id===dc.id)) return;
+      if(existingCatNames.has(normalizeCatPickerName(dc.name))) return;
+      categories.push({id:dc.id,name:dc.name,color:dc.color,groupId:dc.groupId});
+    });
+    const legacyMap=new Map();
+    DEFAULT_CATEGORIES.forEach(dc=>{ (dc.legacy||[]).forEach(name=>legacyMap.set(normalizeCatPickerName(name),dc.id)); });
+    const toRemove=new Set();
+    categories.forEach(c=>{
+      if(DEFAULT_CATEGORIES.some(dc=>dc.id===c.id)) return; // 방금 새로 만든 기본 카테고리는 건너뜀
+      const targetId=legacyMap.get(normalizeCatPickerName(c.name||''));
+      if(!targetId || targetId===c.id) return;
+      items.forEach(it=>{
+        if(!Array.isArray(it.catIds) || !it.catIds.includes(c.id)) return;
+        const merged=new Set(it.catIds.map(id=>id===c.id?targetId:id));
+        it.catIds=[...merged];
+      });
+      toRemove.add(c.id);
+    });
+    if(toRemove.size) categories=categories.filter(c=>!toRemove.has(c.id));
+    normalizeCategoryGroups();
+    localStorage.setItem(TAXONOMY_MIGRATION_KEY,'1');
+    return true;
+  }catch(e){ console.warn('태그 체계 마이그레이션 실패:', e); return false; }
 }
 
 // ─── Category / Group Inline Edit ───
@@ -2124,10 +2210,11 @@ window.addEventListener('DOMContentLoaded',()=>{
   try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
   loadLocal();
   normalizeCategoryGroups();
+  const taxonomyMigrated=ensureDefaultTaxonomy();
   installReliablePasteListener();
   removeItemsThatAreCarouselSlides();
   const repaired=repairAndPruneMediaItems();
-  if(repaired.linked||repaired.removed) saveLocal();
+  if(repaired.linked||repaired.removed||taxonomyMigrated) saveLocal();
 
   renderAll();
   onProviderChange();
