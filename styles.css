@@ -1208,3 +1208,6 @@ body{font-size:13px;}
 #board-wrap{padding:21px 27px}.mobile-filter-trigger{display:none;border:1px solid var(--b3);border-radius:8px;padding:9px 12px;background:var(--s2);color:var(--t1);font:inherit;cursor:pointer}
 @media(max-width:1000px){#topbar{gap:5px}#topbar .tb-btn{padding:7px 8px;font-size:11px}#sidebar{width:240px!important}.search-hero{padding:18px 18px 12px}#board-wrap{padding:16px}}
 @media(max-width:768px){#sidebar{width:min(300px,90vw)!important}.search-hero h1{font-size:20px}.search-hero p{font-size:11px}.mobile-filter-trigger{display:block}.search-hero{padding:16px 14px 11px}#search-wrap.search-hero-input input{height:52px;font-size:12px}.search-hero-bottom{gap:4px}.search-hero-tools{gap:8px}#board-wrap{padding:12px}#logo-wrap{margin-right:auto}#topbar>.spacer{display:none}}
+
+/* Search hint: clearer medium gray across dark/light themes */
+#search-wrap.search-hero-input #search-input::placeholder{color:#9299a5;opacity:1;}
