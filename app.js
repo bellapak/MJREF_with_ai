@@ -22,16 +22,39 @@ const FACETS={
 const FACET_NAMES={purpose:'용도',industry:'업종',benefit:'혜택·프로모션',color:'색상군',visual:'비주얼 스타일',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'카피 소구',tone:'카피 톤',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
 let facetFilters={};let classificationFilter='all';
 function cleanFacets(value){const result={};Object.keys(FACETS).forEach(k=>{result[k]=Array.isArray(value?.[k])?value[k].filter(v=>FACETS[k].includes(v)):[];});return result;}
-function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,values])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div><div class="facet-chips">${values.map(v=>`<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${selected[key].includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div></section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
-function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim();return result;}
-function renderFacetFilters(){const root=$('facet-filters');if(!root)return;root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter"><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary><div class="facet-filter-options">${opts.map(v=>`<label><input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></details>`).join('');root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
+function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,options])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div><div class="facet-chips">${options.map(v=>`<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${selected[key].includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div></section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
+function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex='';}return result;}
+function renderFacetFilters(){const root=$('facet-filters');if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&['purpose','benefit','color','visual'].includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary><div class="facet-filter-options">${opts.map(v=>`<label><input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
 function updateFacetFilterCounts(){Object.keys(FACETS).forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
 function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
+function expandAllFacetTrees(open){document.querySelectorAll('#facet-filters details').forEach(d=>d.open=open);}
+function clearNavigatorFilters(){
+  facetFilters={};classificationFilter='all';currentFilter='all';currentCatFilter=null;
+  const field=$('search-input');if(field)field.value='';
+  if($('classification-filter'))$('classification-filter').value='all';
+  document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));
+  renderFacetFilters();renderBoard();
+}
+function removeFacetChip(key,value){
+  facetFilters[key]=(facetFilters[key]||[]).filter(v=>v!==value);
+  const input=[...document.querySelectorAll('#facet-filters input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
+  if(input)input.checked=false;
+  updateFacetFilterCounts();renderBoard();
+}
+function renderNavigatorChips(){
+  const target=$('active-filter-chips');if(!target)return;
+  target.replaceChildren();
+  const add=(label,callback)=>{const b=document.createElement('button');b.type='button';b.className='active-filter-chip';b.textContent=label+' ×';b.addEventListener('click',callback);target.appendChild(b);};
+  Object.entries(facetFilters).forEach(([k,vs])=>(vs||[]).forEach(v=>add(`${FACET_NAMES[k]} · ${v}`,()=>removeFacetChip(k,v))));
+  if(currentFilter!=='all')add('유형 · '+({image:'이미지',video:'영상',carousel:'캐러셀',link:'링크'}[currentFilter]||currentFilter),()=>{currentFilter='all';document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));renderBoard();});
+  if(classificationFilter!=='all')add(classificationFilter==='classified'?'분류 완료':'미분류',()=>{classificationFilter='all';$('classification-filter').value='all';renderBoard();});
+  const q=$('search-input')?.value.trim();if(q)add('검색 · '+q,()=>{$('search-input').value='';renderBoard();});
+  const label=$('search-results-label');if(label)label.textContent=target.children.length?`${target.children.length}개 검색 조건 적용 중`:'전체 레퍼런스 탐색';
+}
 function isClassified(it){return Object.values(cleanFacets(it.facets)).some(arr=>arr.length>0);}
 function legacyMemo(it){return [it.notes,it.visualNotes&&`[기존 비주얼 메모]\n${it.visualNotes}`,it.contentNotes&&`[기존 콘텐츠 메모]\n${it.contentNotes}`,it.caption&&`[기존 본문]\n${it.caption}`,it.imageCopy&&`[기존 이미지 카피]\n${it.imageCopy}`,it.hook&&`[기존 훅]\n${it.hook}`,it.cta&&`[기존 CTA]\n${it.cta}`].filter(Boolean).join('\n\n');}
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
-const PROVIDER_HINTS={anthropic:'발급: console.anthropic.com/settings/keys',openai:'발급: platform.openai.com/api-keys',google:'발급: aistudio.google.com/app/apikey'};
 const DRIVE_SCOPE='https://www.googleapis.com/auth/drive';
 const DRIVE_ROOT_FOLDER_NAME='refboard-assets';
 const DRIVE_ASSET_FOLDER_NAME='assets';
@@ -115,10 +138,12 @@ function normalizeItem(raw={}){
     fileName: raw.fileName || raw.filename || raw.name || fileNameFromUrl(src) || '',
     localBlobKey: raw.localBlobKey || '',
     catIds: Array.isArray(raw.catIds)?raw.catIds:[],
+    facets: {...cleanFacets(raw.facets), hex: raw.facets?.hex || ''},
+    memoMigrated: true,
     platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl,
-    caption: raw.caption || raw.description || raw.text || '', hook: raw.hook || raw.headline || '', cta: raw.cta || '',
-    imageCopy: raw.imageCopy || raw.image_copy || '',
-    visualNotes: raw.visualNotes || raw.visual_notes || '', contentNotes: raw.contentNotes || raw.content_notes || '', notes: raw.notes || '',
+    caption: '', hook: '', cta: '',
+    imageCopy: '',
+    visualNotes: '', contentNotes: '', notes: raw.memoMigrated ? (raw.notes || '') : legacyMemo(raw),
     carousel: Array.isArray(raw.carousel)?raw.carousel.map(slide=>normalizeMediaRef(slide)):[],
     ts: raw.ts || raw.createdAt || Date.now(),
     _file: raw._file
@@ -1170,7 +1195,7 @@ function setFilter(f,btn){ currentFilter=f; currentCatFilter=null; document.quer
 function setSort(s,btn){ currentSort=s; document.querySelectorAll('.sb-btn[data-sort]').forEach(b=>b.classList.remove('active')); btn?.classList.add('active'); renderBoard(); }
 function setView(v){ currentView=v; $('grid-btn')?.classList.toggle('active',v==='grid'); $('list-btn')?.classList.toggle('active',v==='list'); renderBoard(); }
 function switchTab(tab){ $('board-wrap').style.display='block'; }
-function toggleAiPanel(){ const active=$('ai-tab')?.classList.contains('active'); switchTab(active?'board':'ai'); }
+
 function toggleMobileSidebar(){ $('sidebar')?.classList.add('mobile-open'); $('sidebar-overlay')?.classList.add('open'); }
 function closeMobileSidebar(){ $('sidebar')?.classList.remove('mobile-open'); $('sidebar-overlay')?.classList.remove('open'); }
 
@@ -1275,6 +1300,7 @@ function renderBoard(){
   const arr=filteredItems();
   $('count-label') && ($('count-label').textContent=`${arr.length}개`);
   renderCounts();
+  renderNavigatorChips();
   
   const frag = document.createDocumentFragment();
   frag.appendChild(pasteBarNode());
@@ -1582,7 +1608,7 @@ function fileToItem(file, extra={}){
   const item={
     id, title: extra.title||file.name||'붙여넣기 이미지', type: isVideo?'video':'image', src: previewSrc, previewSrc,
     driveFileId:'', mimeType:file.type||'image/png', fileName:file.name||`paste_${Date.now()}.png`, localBlobKey,
-    catIds:Array.isArray(extra.catIds)?extra.catIds:[], platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
+    catIds:Array.isArray(extra.catIds)?extra.catIds:[], facets:{...cleanFacets(extra.facets),hex:extra.facets?.hex||''}, platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
     caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', imageCopy:extra.imageCopy||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
     carousel:Array.isArray(extra.carousel)?extra.carousel:[], ts:extra.ts||Date.now(), _file:file
   };
@@ -1889,7 +1915,6 @@ function renderDetail(){
     <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
     <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
     <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="5">${esc(it.notes||'')}</textarea></div>
-    <div class="form-row"><label class="form-label">GPT 이미지·영상 자동 분류 (선택)</label><button class="detail-btn" onclick="classifySelectedItem()">현재 레퍼런스 AI 분류</button><span class="field-helper">AI 분류는 검수 후 저장됩니다. 영상은 프레임 최대 5장을 분석하며 음성·자막의 완전 분석은 지원하지 않습니다.</span></div>
     <div class="detail-actions">
       <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
       ${isDownloadableItem(it)?'<button class="detail-btn" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}
@@ -1922,66 +1947,10 @@ function saveDetailEdits(){
 }
 
 
-async function refToDataPart(blob){return {inline_data:{mime_type:blob.type||'image/jpeg',data:await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(blob);})}};}
-async function framesFromVideo(blob){const url=URL.createObjectURL(blob),video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='auto';video.src=url;try{await new Promise((res,rej)=>{video.onloadedmetadata=res;video.onerror=rej;});const duration=Number.isFinite(video.duration)?video.duration:0;const parts=[];for(let i=0;i<Math.min(5,Math.max(1,Math.ceil(duration/5)));i++){const t=duration?Math.min(duration-.05,(i+.5)*duration/Math.min(5,Math.max(1,Math.ceil(duration/5)))):0;video.currentTime=Math.max(0,t);await new Promise((res,rej)=>{video.onseeked=res;video.onerror=rej;});const canvas=document.createElement('canvas');const scale=Math.min(1,960/Math.max(video.videoWidth||1,video.videoHeight||1));canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);parts.push(await refToDataPart(await new Promise(r=>canvas.toBlob(r,'image/jpeg',.72))));}return parts;}finally{URL.revokeObjectURL(url);video.removeAttribute('src');video.load();}}
-// 공개 GitHub Pages에서는 OpenAI 비밀 키를 절대 브라우저로 보내지 않습니다.
-let refboardGatewayAccessCode=''; // 메모리에만 보관, 새로고침하면 지워짐
-const REFBOARD_GATEWAY_URL_KEY='refboard_classification_gateway_url';
-function getGatewayUrl(){return (localStorage.getItem(REFBOARD_GATEWAY_URL_KEY)||'').trim().replace(/\/+$/,'');}
-function openAiGatewaySetup(){
-  let modal=$('gateway-setup-modal');
-  if(!modal){
-    modal=document.createElement('div');modal.id='gateway-setup-modal';modal.className='modal-overlay';
-    modal.innerHTML=`<div class="modal-box"><h3>AI 자동 분류 연결</h3><p style="font-size:12px;line-height:1.8;color:var(--t2);margin:12px 0;">공개 GitHub Pages에서는 OpenAI API 키를 입력하지 않습니다. Cloudflare Worker 주소와 서버에 설정한 별도의 접근 코드를 입력하세요. 접근 코드는 현재 탭의 메모리에만 남습니다.</p><div class="form-row"><label class="form-label">Worker HTTPS 주소</label><input id="gateway-url-input" class="form-input" placeholder="https://refboard-ai.example.workers.dev"></div><div class="form-row"><label class="form-label">개인 접근 코드 (OpenAI API 키가 아님)</label><input type="password" id="gateway-access-input" autocomplete="off" class="form-input" placeholder="Worker REFBOARD_ACCESS_CODE"></div><div class="modal-actions"><button class="btn-cancel" onclick="closeModal('gateway-setup-modal')">취소</button><button class="btn-primary" onclick="saveAiGatewaySetup()">연결 설정</button></div></div>`;
-    document.body.appendChild(modal);
-  }
-  $('gateway-url-input').value=getGatewayUrl();$('gateway-access-input').value=refboardGatewayAccessCode;
-  modal.classList.add('open');
-}
-function saveAiGatewaySetup(){
-  const url=$('gateway-url-input').value.trim().replace(/\/+$/,'');
-  if(!/^https:\/\/[^\s/?#]+(?:\/[\w/-]*)?$/.test(url)){showToast('HTTPS Worker 주소를 입력하세요.','error');return;}
-  refboardGatewayAccessCode=$('gateway-access-input').value;
-  if(!refboardGatewayAccessCode){showToast('접근 코드를 입력하세요.','error');return;}
-  localStorage.setItem(REFBOARD_GATEWAY_URL_KEY,url);
-  closeModal('gateway-setup-modal');showToast('AI 분류 연결 정보 저장 완료','success');
-}
-// 이전 앱이 보관하던 OpenAI API 키를 브라우저 저장소에서 정리합니다.
+// GitHub Pages 단독 배포: 모든 분류는 브라우저에서 수동으로 저장합니다.
+// 기존 브라우저에 남아 있을 수 있는 AI 연동 키만 삭제합니다.
 function clearLegacyBrowserApiKeys(){
-  ['refboard_openai_classification_key','refboard_api_key_openai','refboard_openai_key'].forEach(k=>localStorage.removeItem(k));
-}
-async function classifySelectedItem(){
-  const it=items.find(x=>x.id===selectedId);if(!it)return;
-  const endpoint=getGatewayUrl();
-  if(!endpoint||!refboardGatewayAccessCode){openAiGatewaySetup();return;}
-  try{
-    showToast('GPT로 미디어 분류 중…');
-    const imageParts=[];
-    const media=it.type==='carousel'?(it.carousel||[]).slice(0,5):[it];
-    for(const m of media){
-      const blob=await blobFromMedia(m);if(!blob)continue;
-      const extracted=blob.type.startsWith('video/')?await framesFromVideo(blob):(blob.type.startsWith('image/')?[await refToDataPart(blob)]:[]);
-      for(const part of extracted){
-        if(imageParts.length>=5)break;
-        imageParts.push({type:'image_url',image_url:{url:`data:${part.inline_data.mime_type};base64,${part.inline_data.data}`,detail:'low'}});
-      }
-      if(imageParts.length>=5)break;
-    }
-    if(!imageParts.length)throw Error('미디어를 읽을 수 없습니다. 파일 업로드 또는 Drive 연결을 확인하세요.');
-    // 카테고리는 서버에서 허용된 값으로 다시 검증합니다. 개인 인증 코드는 비밀 API 키가 아닙니다.
-    const resp=await fetch(endpoint+'/classify',{
-      method:'POST',mode:'cors',headers:{'Content-Type':'application/json','X-Refboard-Access':refboardGatewayAccessCode},
-      body:JSON.stringify({images:imageParts})
-    });
-    const data=await resp.json().catch(()=>({}));
-    if(!resp.ok)throw Error(data.error||`서버 요청 실패 (${resp.status})`);
-    const proposed=cleanFacets(data.facets||{});
-    const summary=Object.entries(proposed).filter(([k,v])=>Array.isArray(v)&&v.length).map(([k,v])=>`${FACET_NAMES[k]}: ${v.join(', ')}`).join('\n');
-    if(!summary){showToast('확실하게 분류할 내용이 없습니다.');return;}
-    if(!confirm('GPT 자동 분류 제안입니다. 확인 후 적용할까요?\n\n'+summary))return;
-    it.facets={...cleanFacets(it.facets),...proposed,hex:it.facets?.hex||''};
-    it.classificationSource='openai-worker-reviewed';await saveData();renderBoard();renderDetail();showToast('GPT 분류 적용 및 저장 완료','success');
-  }catch(e){console.error(e);alert('GPT 분류 실패: '+e.message);}
+  ['refboard_openai_classification_key','refboard_api_key_openai','refboard_openai_key','refboard_classification_gateway_url'].forEach(k=>localStorage.removeItem(k));
 }
 
 // ─── Initialization ───
@@ -1998,6 +1967,13 @@ window.addEventListener('DOMContentLoaded',()=>{
   if(repaired.linked||repaired.removed||taxonomyMigrated) saveLocal();
 
   renderAll();
+  document.addEventListener('keydown',event=>{
+    const tag=event.target?.tagName?.toLowerCase();
+    if(event.key==='/'&&!event.ctrlKey&&!event.metaKey&&!['input','textarea','select'].includes(tag)){
+      event.preventDefault();$('search-input')?.focus();
+    }
+    if(event.key==='Escape'&&document.activeElement?.id==='search-input')document.activeElement.blur();
+  });
 
   updateDriveUi();
 

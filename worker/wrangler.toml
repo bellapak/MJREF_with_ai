@@ -1,7 +1,0 @@
-name = "refboard-ai-gateway"
-main = "index.js"
-compatibility_date = "2026-10-16"
-
-[vars]
-ALLOWED_ORIGIN = "https://YOUR_USERNAME.github.io"
-OPENAI_MODEL = "gpt-4.1-mini"
