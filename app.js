@@ -2,6 +2,34 @@
 // refboard - app.js (Data Loss Fixed & Performance Optimized & Link UI Updated)
 // =====================================================
 
+
+// 레퍼런스 백과: 서로 독립적인 검색 축. 한 축 안 OR, 서로 다른 축 AND.
+const FACETS={
+ purpose:['광고','SNS 콘텐츠','상세페이지','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','UI/UX','굿즈','기타'],
+ industry:['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타'],
+ benefit:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
+ color:['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크','브라운','베이지','화이트','그레이','블랙','멀티컬러'],
+ visual:['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실','일러스트','3D/CG','타이포그래피','포토그래픽'],
+ layout:['중앙 정렬','좌우 분할','그리드','비대칭','콜라주','풀블리드','카드형','큰 타이포','여백 중심','정보 밀집'],
+ composition:['정면','탑뷰/플랫레이','클로즈업','매크로','아이레벨','로우앵글','인물 중심','제품 단독','사용 장면'],
+ subject:['제품','인물','캐릭터','타이포그래피','공간/인테리어','자연','소품','음식','패키지','UI 화면'],
+ appeal:['문제 해결','기능/성능','가격/가치','사회적 증거','열망/라이프스타일','희소성/긴급성','호기심/반전','유머/밈','감성/스토리'],
+ tone:['위트/유머','도발적','친근함','담백함','전문적','감성적','직설적','고급스러움','실험적'],
+ cta:['구매 유도','탐색/더보기','가입/구독','참여/응모','저장/공유','방문/예약','CTA 없음'],
+ season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
+ motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
+};
+const FACET_NAMES={purpose:'용도',industry:'업종',benefit:'혜택·프로모션',color:'색상군',visual:'비주얼 스타일',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'카피 소구',tone:'카피 톤',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
+let facetFilters={};let classificationFilter='all';
+function cleanFacets(value){const result={};Object.keys(FACETS).forEach(k=>{result[k]=Array.isArray(value?.[k])?value[k].filter(v=>FACETS[k].includes(v)):[];});return result;}
+function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,values])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div><div class="facet-chips">${values.map(v=>`<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${selected[key].includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div></section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
+function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim();return result;}
+function renderFacetFilters(){const root=$('facet-filters');if(!root)return;root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter"><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary><div class="facet-filter-options">${opts.map(v=>`<label><input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></details>`).join('');root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
+function updateFacetFilterCounts(){Object.keys(FACETS).forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
+function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
+function isClassified(it){return Object.values(cleanFacets(it.facets)).some(arr=>arr.length>0);}
+function legacyMemo(it){return [it.notes,it.visualNotes&&`[기존 비주얼 메모]\n${it.visualNotes}`,it.contentNotes&&`[기존 콘텐츠 메모]\n${it.contentNotes}`,it.caption&&`[기존 본문]\n${it.caption}`,it.imageCopy&&`[기존 이미지 카피]\n${it.imageCopy}`,it.hook&&`[기존 훅]\n${it.hook}`,it.cta&&`[기존 CTA]\n${it.cta}`].filter(Boolean).join('\n\n');}
+
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
 const PROVIDER_HINTS={anthropic:'발급: console.anthropic.com/settings/keys',openai:'발급: platform.openai.com/api-keys',google:'발급: aistudio.google.com/app/apikey'};
 const DRIVE_SCOPE='https://www.googleapis.com/auth/drive';
@@ -1117,9 +1145,7 @@ function bindDriveMediaRemote(el,it,placeholder=''){
 
 // ─── UI & Rendering ───
 function renderAll(){
-  renderCategories();
   renderBoard();
-  if($('ai-tab')?.classList.contains('active')) renderAiTargets();
   updateDriveUi();
 }
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
@@ -1127,7 +1153,10 @@ function filteredItems(){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
-  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl].join(' ').toLowerCase().includes(q));
+  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl,Object.values(x.facets||{}).flat().join(' ')].join(' ').toLowerCase().includes(q));
+  for(const [key,values] of Object.entries(facetFilters)){if(values.length)arr=arr.filter(x=>values.some(v=>(x.facets?.[key]||[]).includes(v)));}
+  if(classificationFilter==='classified')arr=arr.filter(isClassified);
+  if(classificationFilter==='unclassified')arr=arr.filter(x=>!isClassified(x));
   arr.sort((a,b)=>currentSort==='oldest'?a.ts-b.ts:currentSort==='title'?a.title.localeCompare(b.title,'ko'):b.ts-a.ts);
   return arr;
 }
@@ -1140,7 +1169,7 @@ function renderCounts(){
 function setFilter(f,btn){ currentFilter=f; currentCatFilter=null; document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.remove('active')); btn?.classList.add('active'); renderBoard(); }
 function setSort(s,btn){ currentSort=s; document.querySelectorAll('.sb-btn[data-sort]').forEach(b=>b.classList.remove('active')); btn?.classList.add('active'); renderBoard(); }
 function setView(v){ currentView=v; $('grid-btn')?.classList.toggle('active',v==='grid'); $('list-btn')?.classList.toggle('active',v==='list'); renderBoard(); }
-function switchTab(tab){ $('tab-board')?.classList.toggle('active',tab==='board'); $('tab-ai')?.classList.toggle('active',tab==='ai'); $('board-wrap').style.display=tab==='board'?'block':'none'; $('ai-tab').classList.toggle('active',tab==='ai'); if(tab==='ai') renderAiTargets(); }
+function switchTab(tab){ $('board-wrap').style.display='block'; }
 function toggleAiPanel(){ const active=$('ai-tab')?.classList.contains('active'); switchTab(active?'board':'ai'); }
 function toggleMobileSidebar(){ $('sidebar')?.classList.add('mobile-open'); $('sidebar-overlay')?.classList.add('open'); }
 function closeMobileSidebar(){ $('sidebar')?.classList.remove('mobile-open'); $('sidebar-overlay')?.classList.remove('open'); }
@@ -1225,7 +1254,7 @@ function cardNode(it,index=0){
   if(media) { card.appendChild(media); }
 
   const info=document.createElement('div'); info.className='card-info';
-  const tags=(it.catIds||[]).map(id=>categories.find(c=>c.id===id)).filter(Boolean).map(c=>`<span class="card-cat-tag" style="background:${c.color}22;color:${c.color}">${esc(c.name)}</span>`).join('');
+  const tags=Object.entries(cleanFacets(it.facets)).flatMap(([k,vals])=>vals.slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
   info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
   const editBtn=info.querySelector('.card-title-edit-btn');
@@ -1541,7 +1570,7 @@ function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-caption','add-hook','add-cta','add-image-copy','add-visual-notes','add-content-notes','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats(); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
@@ -1565,7 +1594,7 @@ function handleModalFile(e){ pendingFile=e.target.files?.[0]||null; $('modal-fil
 function handleCarouselFiles(e){ pendingCarouselFiles=[...(e.target.files||[])]; const list=$('carousel-preview-list'); list.innerHTML=''; pendingCarouselFiles.forEach(f=>{const img=document.createElement('img'); img.src=URL.createObjectURL(f); img.style.cssText='width:64px;height:64px;object-fit:cover;border-radius:8px'; list.appendChild(img);}); $('carousel-count-label').textContent=`${pendingCarouselFiles.length}개 선택됨`; }
 
 async function saveFromModal(){
-  const base={title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,caption:$('add-caption').value,hook:$('add-hook').value,cta:$('add-cta').value,imageCopy:$('add-image-copy')?.value||'',visualNotes:$('add-visual-notes').value,contentNotes:$('add-content-notes').value,notes:$('add-notes').value,ts:Date.now()};
+  const base={title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,notes:$('add-notes').value,facets:readFacetFields('add'),ts:Date.now()};
   const url=$('add-url').value.trim();
   if(modalMode==='carousel'){
     if(!pendingCarouselFiles.length){showToast('캐러셀 이미지를 선택해주세요','error');return;}
@@ -1857,22 +1886,10 @@ function renderDetail(){
     <div class="detail-section-title">수정</div>
     <div class="form-row"><label class="form-label">제목</label><input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
-    <div class="form-row"><label class="form-label">게시물 본문</label><textarea class="detail-input" id="detail-edit-caption" rows="5" placeholder="원문 캡션, 광고 카피, 해시태그를 그대로 넣어주세요">${esc(it.caption||'')}</textarea></div>
-    <div class="form-row"><label class="form-label">이미지 카피 <span style="font-size:10px;color:var(--t3);text-transform:none;font-weight:400;">(이미지 안에 적힌 문구)</span></label><textarea class="detail-input" id="detail-edit-image-copy" rows="3" placeholder="이미지/썸네일 위에 실제로 적혀 있는 텍스트를 그대로 옮겨 적어주세요">${esc(it.imageCopy||'')}</textarea></div>
-    <div class="form-row"><label class="form-label">훅 / 첫 문장</label><input class="detail-input" id="detail-edit-hook" value="${esc(it.hook||'')}"></div>
-    <div class="form-row"><label class="form-label">CTA</label><input class="detail-input" id="detail-edit-cta" value="${esc(it.cta||'')}"></div>
-    <div class="form-row"><label class="form-label">비주얼 메모</label><textarea class="detail-input" id="detail-edit-visual" rows="3">${esc(it.visualNotes||'')}</textarea></div>
-    <div class="form-row"><label class="form-label">콘텐츠 메모</label><textarea class="detail-input" id="detail-edit-content" rows="3">${esc(it.contentNotes||'')}</textarea></div>
-    
-    <div class="form-row">
-      <label class="form-label">링크 첨부</label>
-      <div style="display:flex;gap:6px;">
-        <input class="detail-input" style="flex:1;" id="detail-edit-link" value="${esc(it.sourceUrl || (it.type==='link'?it.src:'') || '')}" placeholder="https:// URL 입력">
-        <button class="detail-btn" style="flex-shrink:0;white-space:nowrap;" onclick="const url=document.getElementById('detail-edit-link').value; if(url) window.open(url, '_blank')">바로가기</button>
-      </div>
-    </div>
-
-    <div class="form-row"><label class="form-label">일반 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="3">${esc(it.notes||'')}</textarea></div>
+    <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
+    <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
+    <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="5">${esc(it.notes||'')}</textarea></div>
+    <div class="form-row"><label class="form-label">GPT 이미지·영상 자동 분류 (선택)</label><button class="detail-btn" onclick="classifySelectedItem()">현재 레퍼런스 AI 분류</button><span class="field-helper">AI 분류는 검수 후 저장됩니다. 영상은 프레임 최대 5장을 분석하며 음성·자막의 완전 분석은 지원하지 않습니다.</span></div>
     <div class="detail-actions">
       <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
       ${isDownloadableItem(it)?'<button class="detail-btn" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}
@@ -1893,368 +1910,85 @@ function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
-  it.caption=$('detail-edit-caption')?.value||'';
-  it.imageCopy=$('detail-edit-image-copy')?.value||'';
-  it.hook=$('detail-edit-hook')?.value||'';
-  it.cta=$('detail-edit-cta')?.value||'';
-  it.visualNotes=$('detail-edit-visual')?.value||'';
-  it.contentNotes=$('detail-edit-content')?.value||'';
-  
+  it.facets=readFacetFields('detail');
   it.sourceUrl=$('detail-edit-link')?.value||'';
   if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;
   if((it.type==='image'||it.type==='video') && !it.src && isDirectMediaUrl(it.sourceUrl)) it.src=it.sourceUrl;
   if(!it.driveFileId) it.driveFileId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl)||'';
 
   it.notes=$('detail-edit-notes')?.value||'';
-  saveData(); renderBoard(); renderAiTargets(); renderDetail();
+  saveData(); renderBoard(); renderDetail();
   showToast('수정 저장 완료','success');
 }
 
-// ─── AI Tools ───
-function renderAiFilters(){
-  const gf=$('ai-group-filter'), cf=$('ai-cat-filter');
-  if(gf) gf.innerHTML='<option value="">전체 대분류</option>'+groups.map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('');
-  if(cf){
-    let cats=categories;
-    if(currentAiGroupFilter) cats=cats.filter(c=>getCategoryGroupId(c)===currentAiGroupFilter);
-    cf.innerHTML='<option value="">전체 소분류</option>'+cats.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+
+async function refToDataPart(blob){return {inline_data:{mime_type:blob.type||'image/jpeg',data:await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(blob);})}};}
+async function framesFromVideo(blob){const url=URL.createObjectURL(blob),video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='auto';video.src=url;try{await new Promise((res,rej)=>{video.onloadedmetadata=res;video.onerror=rej;});const duration=Number.isFinite(video.duration)?video.duration:0;const parts=[];for(let i=0;i<Math.min(5,Math.max(1,Math.ceil(duration/5)));i++){const t=duration?Math.min(duration-.05,(i+.5)*duration/Math.min(5,Math.max(1,Math.ceil(duration/5)))):0;video.currentTime=Math.max(0,t);await new Promise((res,rej)=>{video.onseeked=res;video.onerror=rej;});const canvas=document.createElement('canvas');const scale=Math.min(1,960/Math.max(video.videoWidth||1,video.videoHeight||1));canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);parts.push(await refToDataPart(await new Promise(r=>canvas.toBlob(r,'image/jpeg',.72))));}return parts;}finally{URL.revokeObjectURL(url);video.removeAttribute('src');video.load();}}
+// 공개 GitHub Pages에서는 OpenAI 비밀 키를 절대 브라우저로 보내지 않습니다.
+let refboardGatewayAccessCode=''; // 메모리에만 보관, 새로고침하면 지워짐
+const REFBOARD_GATEWAY_URL_KEY='refboard_classification_gateway_url';
+function getGatewayUrl(){return (localStorage.getItem(REFBOARD_GATEWAY_URL_KEY)||'').trim().replace(/\/+$/,'');}
+function openAiGatewaySetup(){
+  let modal=$('gateway-setup-modal');
+  if(!modal){
+    modal=document.createElement('div');modal.id='gateway-setup-modal';modal.className='modal-overlay';
+    modal.innerHTML=`<div class="modal-box"><h3>AI 자동 분류 연결</h3><p style="font-size:12px;line-height:1.8;color:var(--t2);margin:12px 0;">공개 GitHub Pages에서는 OpenAI API 키를 입력하지 않습니다. Cloudflare Worker 주소와 서버에 설정한 별도의 접근 코드를 입력하세요. 접근 코드는 현재 탭의 메모리에만 남습니다.</p><div class="form-row"><label class="form-label">Worker HTTPS 주소</label><input id="gateway-url-input" class="form-input" placeholder="https://refboard-ai.example.workers.dev"></div><div class="form-row"><label class="form-label">개인 접근 코드 (OpenAI API 키가 아님)</label><input type="password" id="gateway-access-input" autocomplete="off" class="form-input" placeholder="Worker REFBOARD_ACCESS_CODE"></div><div class="modal-actions"><button class="btn-cancel" onclick="closeModal('gateway-setup-modal')">취소</button><button class="btn-primary" onclick="saveAiGatewaySetup()">연결 설정</button></div></div>`;
+    document.body.appendChild(modal);
   }
+  $('gateway-url-input').value=getGatewayUrl();$('gateway-access-input').value=refboardGatewayAccessCode;
+  modal.classList.add('open');
 }
-
-function onAiGroupFilterChange(){ currentAiGroupFilter=$('ai-group-filter').value; currentAiCatFilter=''; if($('ai-cat-filter')) $('ai-cat-filter').value=''; renderAiFilters(); renderAiTargets(); }
-function onAiCatFilterChange(){ currentAiCatFilter=$('ai-cat-filter').value; renderAiTargets(); }
-function renderAiTargets(){
-  const el=$('ai-target-selector'); if(!el)return;
-  let arr=[...items];
-  if(currentAiGroupFilter){
-    const catIds=categories.filter(c=>getCategoryGroupId(c)===currentAiGroupFilter).map(c=>c.id);
-    arr=arr.filter(i=>(i.catIds||[]).some(id=>catIds.includes(id)));
-  }
-  if(currentAiCatFilter) arr=arr.filter(i=>i.catIds?.includes(currentAiCatFilter));
-  $('board-img-cnt')&&($('board-img-cnt').textContent=items.filter(i=>i.type==='image'||i.type==='carousel').length);
-  $('board-vid-cnt')&&($('board-vid-cnt').textContent=items.filter(i=>i.type==='video').length);
-  $('ai-filter-meta')&&($('ai-filter-meta').textContent=`${arr.length}개 레퍼런스 표시 중`);
-  el.innerHTML='';
-  if(!arr.length){el.innerHTML='<div class="ai-target-empty">표시할 레퍼런스가 없습니다</div>';return;}
-  arr.forEach(it=>{
-    const c=document.createElement('div'); c.className='ai-target-card '+(aiSelectedIds.has(it.id)?'selected':'');
-    c.onclick=()=>{aiSelectedIds.has(it.id)?aiSelectedIds.delete(it.id):aiSelectedIds.add(it.id); renderAiTargets();};
-    const img=document.createElement(it.type==='video'?'video':'img'); if(it.type==='video') img.muted=true;
-    bindCardMedia(img,it.type==='carousel'?(it.carousel?.[0]||{}):it);
-    c.appendChild(img); c.insertAdjacentHTML('beforeend',`<div class="atc-title">${esc(it.title)}</div>`); el.appendChild(c);
-  });
+function saveAiGatewaySetup(){
+  const url=$('gateway-url-input').value.trim().replace(/\/+$/,'');
+  if(!/^https:\/\/[^\s/?#]+(?:\/[\w/-]*)?$/.test(url)){showToast('HTTPS Worker 주소를 입력하세요.','error');return;}
+  refboardGatewayAccessCode=$('gateway-access-input').value;
+  if(!refboardGatewayAccessCode){showToast('접근 코드를 입력하세요.','error');return;}
+  localStorage.setItem(REFBOARD_GATEWAY_URL_KEY,url);
+  closeModal('gateway-setup-modal');showToast('AI 분류 연결 정보 저장 완료','success');
 }
-
-function selectAllVisibleAiTargets(){ filteredItems().forEach(i=>aiSelectedIds.add(i.id)); renderAiTargets(); }
-function clearVisibleAiTargets(){ filteredItems().forEach(i=>aiSelectedIds.delete(i.id)); renderAiTargets(); }
-function saveApiKey(){ const p=$('ai-provider')?.value||'google'; const v=$('ai-apikey-input')?.value||''; localStorage.setItem('refboard_ai_'+p,v); $('api-key-status').style.display='block'; showToast('AI 키 저장 완료','success'); }
-function onProviderChange(){ const p=$('ai-provider')?.value||'google'; if($('ai-apikey-input')) $('ai-apikey-input').value=localStorage.getItem('refboard_ai_'+p)||''; if($('api-key-hint')) $('api-key-hint').textContent=PROVIDER_HINTS[p]||''; }
-
-// ─── AI Copywriting (본문 카피 / 이미지 카피 생성) ───
-const COPY_SYSTEM_PROMPT = `당신은 메타 광고·인스타그램·브랜드 SNS 콘텐츠를 전문으로 만드는 시니어 카피라이터입니다.
-
-이 작업의 핵심은 레퍼런스 문장을 그대로 따라 쓰는 것이 아니라, 선택된 레퍼런스들이 가진 "문장의 결"을 분석해서 새로운 콘텐츠 카피로 재구성하는 것입니다.
-
-레퍼런스에서 반드시 분석할 것:
-1. 문장 평균 길이와 호흡
-2. 첫 문장/첫 화면의 후킹 방식
-3. 어미와 말투
-4. 위트·도발·친근함·건조함 등 감정 온도
-5. 정보와 감정의 비율
-6. 줄바꿈과 리듬
-7. 제품/브랜드를 등장시키는 타이밍
-8. CTA의 직접성
-9. 본문, 이미지 속 문구, 훅, CTA, 비주얼 메모, 콘텐츠 메모에서 반복되는 표현 패턴
-
-중요한 우선순위:
-- 사용자가 입력한 "타겟"과 "카피 분위기"가 최우선입니다.
-- 그 다음 선택된 레퍼런스들의 공통된 문장 패턴을 적용합니다.
-- 특정 레퍼런스 한 개의 문장을 복사하거나 단어만 바꿔 재작성하지 마세요.
-- 레퍼런스의 고유 슬로건·브랜드 문구를 그대로 가져오지 마세요.
-- AIDA/PAS 같은 교과서형 광고 구조에 억지로 끼워 맞추지 말고 실제 선택 콘텐츠의 말투와 리듬을 우선하세요.
-- AI가 자주 쓰는 추상적 광고 표현과 상투어를 피하세요.
-- 레퍼런스에 없는 기능, 수치, 효능, 사실은 새로 만들지 마세요.
-- 이모지는 습관적으로 넣지 말고 레퍼런스와 요청 분위기에 맞을 때만 사용하세요.
-
-게시물 본문:
-- 선택된 레퍼런스의 본문/훅/CTA/콘텐츠 메모를 중심으로 문장 결을 벤치마킹합니다.
-- 이미지 문구를 그대로 반복하지 않습니다.
-- 이미지에서 생긴 관심을 이어 받아 맥락, 공감, 제품/콘텐츠 의미를 확장합니다.
-- 실제 SNS에서 읽히는 길이와 줄바꿈으로 작성합니다.
-- 필요할 때만 자연스럽게 CTA를 넣습니다.
-
-이미지 위 문구:
-- 선택된 레퍼런스의 이미지 속 문구/훅/비주얼 메모를 중심으로 벤치마킹합니다.
-- 1~2초 안에 읽히는 짧은 문장이어야 합니다.
-- 단순한 본문 축약본이 아니라 시각물과 함께 볼 때 의미가 완성되는 훅이어야 합니다.
-- 서로 다른 접근의 3개 안을 제안합니다.
-
-반드시 아래 JSON 형식 하나만 출력하세요. 마크다운 코드블록과 추가 설명은 금지합니다.
-{
-  "bodyCopy": "게시물 본문 전체",
-  "imageCopies": ["이미지 문구 1", "이미지 문구 2", "이미지 문구 3"],
-  "benchmarkSummary": "선택 레퍼런스에서 가져온 문장 리듬과 톤의 공통점을 1~2문장으로 설명"
-}`;
-
-async function blobToBase64(blob){
-  return await new Promise((resolve,reject)=>{
-    const r=new FileReader();
-    r.onload=()=>resolve(String(r.result).split(',')[1]||'');
-    r.onerror=()=>reject(r.error||new Error('이미지 변환 실패'));
-    r.readAsDataURL(blob);
-  });
+// 이전 앱이 보관하던 OpenAI API 키를 브라우저 저장소에서 정리합니다.
+function clearLegacyBrowserApiKeys(){
+  ['refboard_openai_classification_key','refboard_api_key_openai','refboard_openai_key'].forEach(k=>localStorage.removeItem(k));
 }
-
-async function collectAiReferenceImages(selectedItems,limit=4){
-  const images=[];
-  for(const it of selectedItems){
-    if(images.length>=limit) break;
-    const media = it.type==='carousel' ? (it.carousel?.[0]||null) : (it.type==='image' ? it : null);
-    if(!media) continue;
-    try{
-      const blob=await blobFromMedia(media);
-      if(blob && blob.size) images.push(await blobToBase64(blob));
-    }catch(e){ console.warn('레퍼런스 이미지 변환 실패:',e); }
-  }
-  return images;
-}
-
-function buildAiReferenceText(selectedItems){
-  return selectedItems.map(it=>[
-    `- 제목: ${it.title||'-'}`,
-    `  브랜드: ${it.brand||'-'}`,
-    `  본문: ${it.caption||'-'}`,
-    `  이미지 속 문구: ${it.imageCopy||'-'}`,
-    `  훅: ${it.hook||'-'}`,
-    `  CTA: ${it.cta||'-'}`,
-    `  비주얼 메모: ${it.visualNotes||'-'}`,
-    `  콘텐츠 메모: ${it.contentNotes||'-'}`
-  ].join('\n')).join('\n\n');
-}
-
-async function requestAiCompletion(provider,apiKey,systemPrompt,userPrompt,images){
-  if(provider==='anthropic') return await callAnthropicCopy(apiKey,systemPrompt,userPrompt,images);
-  if(provider==='openai') return await callOpenAiCopy(apiKey,systemPrompt,userPrompt,images);
-  return await callGeminiCopy(apiKey,systemPrompt,userPrompt,images);
-}
-
-async function callAnthropicCopy(apiKey,systemPrompt,userPrompt,images){
-  const content=images.map(b64=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:b64}}));
-  content.push({type:'text',text:userPrompt});
-  const res=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key':apiKey,
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
-    body:JSON.stringify({model:'claude-sonnet-5',max_tokens:1200,system:systemPrompt,messages:[{role:'user',content}]})
-  });
-  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`Anthropic API 오류 ${res.status}: ${t.slice(0,200)}`); }
-  const data=await res.json();
-  return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
-}
-
-async function callOpenAiCopy(apiKey,systemPrompt,userPrompt,images){
-  const content=[{type:'text',text:userPrompt}];
-  images.forEach(b64=>content.push({type:'image_url',image_url:{url:`data:image/jpeg;base64,${b64}`}}));
-  const res=await fetch('https://api.openai.com/v1/chat/completions',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
-    body:JSON.stringify({model:'gpt-4o',max_tokens:1200,messages:[{role:'system',content:systemPrompt},{role:'user',content}]})
-  });
-  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`OpenAI API 오류 ${res.status}: ${t.slice(0,200)}`); }
-  const data=await res.json();
-  return (data.choices?.[0]?.message?.content||'').trim();
-}
-
-async function callGeminiCopy(apiKey,systemPrompt,userPrompt,images){
-  const parts=[{text:userPrompt}];
-  images.forEach(b64=>parts.push({inline_data:{mime_type:'image/jpeg',data:b64}}));
-  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({systemInstruction:{parts:[{text:systemPrompt}]},contents:[{role:'user',parts}]})
-  });
-  if(!res.ok){ const t=await res.text().catch(()=>''); throw new Error(`Gemini API 오류 ${res.status}: ${t.slice(0,200)}`); }
-  const data=await res.json();
-  return (data.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('\n').trim();
-}
-
-function parseAiCopyPayload(text=''){
-  const raw=String(text||'').trim();
-  if(!raw) return null;
-
-  const cleaned=raw
-    .replace(/^```(?:json)?\s*/i,'')
-    .replace(/\s*```$/,'')
-    .trim();
-
-  const candidates=[cleaned];
-  const firstBrace=cleaned.indexOf('{');
-  const lastBrace=cleaned.lastIndexOf('}');
-  if(firstBrace>=0 && lastBrace>firstBrace){
-    candidates.push(cleaned.slice(firstBrace,lastBrace+1));
-  }
-
-  for(const candidate of candidates){
-    try{
-      const data=JSON.parse(candidate);
-      if(data && typeof data==='object'){
-        return {
-          bodyCopy:String(data.bodyCopy||'').trim(),
-          imageCopies:Array.isArray(data.imageCopies)
-            ? data.imageCopies.map(v=>String(v||'').trim()).filter(Boolean)
-            : [],
-          benchmarkSummary:String(data.benchmarkSummary||'').trim()
-        };
+async function classifySelectedItem(){
+  const it=items.find(x=>x.id===selectedId);if(!it)return;
+  const endpoint=getGatewayUrl();
+  if(!endpoint||!refboardGatewayAccessCode){openAiGatewaySetup();return;}
+  try{
+    showToast('GPT로 미디어 분류 중…');
+    const imageParts=[];
+    const media=it.type==='carousel'?(it.carousel||[]).slice(0,5):[it];
+    for(const m of media){
+      const blob=await blobFromMedia(m);if(!blob)continue;
+      const extracted=blob.type.startsWith('video/')?await framesFromVideo(blob):(blob.type.startsWith('image/')?[await refToDataPart(blob)]:[]);
+      for(const part of extracted){
+        if(imageParts.length>=5)break;
+        imageParts.push({type:'image_url',image_url:{url:`data:${part.inline_data.mime_type};base64,${part.inline_data.data}`,detail:'low'}});
       }
-    }catch(e){}
-  }
-  return null;
-}
-
-async function copyTextToClipboard(text){
-  try{
-    await navigator.clipboard.writeText(String(text||''));
-    showToast('카피를 복사했어요','success');
-  }catch(e){
-    console.warn(e);
-    showToast('복사에 실패했어요','error');
-  }
-}
-
-function renderAiCopyResult(text){
-  const res=$('ai-single-result'); if(!res) return;
-  res.classList.add('open');
-
-  const data=parseAiCopyPayload(text);
-  if(!data){
-    res.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7;">${esc(text)}</div>`;
-    return;
-  }
-
-  res.innerHTML='';
-  const wrap=document.createElement('div');
-  wrap.className='copy-result-wrap';
-
-  if(data.benchmarkSummary){
-    const intro=document.createElement('div');
-    intro.className='copy-result-intro';
-    intro.innerHTML=`<strong>이번 생성에 적용한 레퍼런스 결</strong><p>${esc(data.benchmarkSummary)}</p>`;
-    wrap.appendChild(intro);
-  }
-
-  const bodyCard=document.createElement('section');
-  bodyCard.className='copy-result-card';
-  bodyCard.innerHTML=`
-    <div class="copy-result-card-head">
-      <div class="copy-result-card-title">
-        <strong>게시물 본문</strong>
-        <span>이미지에서 생긴 관심을 이어가는 전체 캡션</span>
-      </div>
-      <div class="copy-result-actions">
-        <button type="button" class="copy-result-copy-btn">복사</button>
-      </div>
-    </div>
-    <div class="copy-result-text">${esc(data.bodyCopy||'생성된 본문이 없습니다.')}</div>
-  `;
-  bodyCard.querySelector('.copy-result-copy-btn').onclick=()=>copyTextToClipboard(data.bodyCopy);
-  wrap.appendChild(bodyCard);
-
-  const imageCard=document.createElement('section');
-  imageCard.className='copy-result-card';
-  imageCard.innerHTML=`
-    <div class="copy-result-card-head">
-      <div class="copy-result-card-title">
-        <strong>이미지 위 문구</strong>
-        <span>본문 축약이 아니라 스크롤을 멈추게 하는 짧은 훅</span>
-      </div>
-    </div>
-    <div class="image-copy-options"></div>
-  `;
-
-  const optionWrap=imageCard.querySelector('.image-copy-options');
-  const copies=data.imageCopies.length ? data.imageCopies : ['생성된 이미지 문구가 없습니다.'];
-  copies.forEach(copy=>{
-    const row=document.createElement('div');
-    row.className='image-copy-option';
-
-    const span=document.createElement('span');
-    span.textContent=copy;
-
-    const btn=document.createElement('button');
-    btn.type='button';
-    btn.className='copy-result-copy-btn';
-    btn.textContent='복사';
-    btn.onclick=()=>copyTextToClipboard(copy);
-
-    row.append(span,btn);
-    optionWrap.appendChild(row);
-  });
-
-  wrap.appendChild(imageCard);
-  res.appendChild(wrap);
-}
-
-async function runCopyGeneration(){
-  const res=$('ai-single-result'); if(!res) return;
-  const provider=$('ai-provider')?.value||'google';
-  const apiKey=localStorage.getItem('refboard_ai_'+provider)||'';
-  if(!apiKey){ showToast('AI 설정에서 API 키를 먼저 저장해주세요','error'); return; }
-
-  const chosen=[...aiSelectedIds].map(id=>items.find(i=>i.id===id)).filter(Boolean);
-  if(!chosen.length){ showToast('참고할 레퍼런스를 1개 이상 선택해주세요','error'); return; }
-
-  const target=($('ai-copy-target')?.value||'').trim();
-  const mood=($('ai-copy-mood')?.value||'').trim();
-  const brief=($('ai-copy-brief')?.value||'').trim();
-
-  localStorage.setItem('refboard_copy_target',target);
-  localStorage.setItem('refboard_copy_mood',mood);
-  localStorage.setItem('refboard_copy_brief',brief);
-
-  const runBtn=$('ai-run-btn');
-  if(runBtn){ runBtn.disabled=true; runBtn.textContent='✦ 생성 중...'; }
-  res.classList.add('open');
-  res.innerHTML='선택한 레퍼런스의 문장 결을 분석하고 있어요...';
-
-  try{
-    const images=await collectAiReferenceImages(chosen);
-    const refText=buildAiReferenceText(chosen);
-
-    const userPrompt=`다음 ${chosen.length}개의 레퍼런스를 벤치마킹해서 완전히 새로운 콘텐츠 카피를 작성하세요.
-첨부 이미지: ${images.length}개
-
-[생성 조건]
-타겟: ${target||'명시되지 않음 — 레퍼런스와 콘텐츠 맥락에서 가장 자연스러운 타겟을 추론'}
-카피 분위기: ${mood||'명시되지 않음 — 선택 레퍼런스의 공통 톤을 분석해 적용'}
-추가 요청사항: ${brief||'없음'}
-
-[선택 레퍼런스]
-${refText}
-
-먼저 레퍼런스들의 공통된 문장 길이, 리듬, 어미, 후킹 방식, 감정 온도, 정보 밀도를 내부적으로 분석하세요.
-그 분석을 바탕으로 게시물 본문과 이미지 위 문구를 서로 다른 역할로 새롭게 작성하세요.
-원문을 복사하거나 단어만 바꾼 유사 문장을 만들지 마세요.
-응답은 지정된 JSON 형식만 반환하세요.`;
-
-    const text=await requestAiCompletion(provider,apiKey,COPY_SYSTEM_PROMPT,userPrompt,images);
-    renderAiCopyResult(text||'생성된 카피가 없습니다. 다시 시도해주세요.');
-  }catch(e){
-    console.error(e);
-    res.innerHTML=`카피 생성에 실패했습니다.<br><span style="font-size:11px;color:var(--t3)">${esc(e.message||'')}</span>`;
-    showToast('AI 카피 생성 실패','error');
-  }finally{
-    if(runBtn){ runBtn.disabled=false; runBtn.textContent='✦ 카피 생성'; }
-  }
+      if(imageParts.length>=5)break;
+    }
+    if(!imageParts.length)throw Error('미디어를 읽을 수 없습니다. 파일 업로드 또는 Drive 연결을 확인하세요.');
+    // 카테고리는 서버에서 허용된 값으로 다시 검증합니다. 개인 인증 코드는 비밀 API 키가 아닙니다.
+    const resp=await fetch(endpoint+'/classify',{
+      method:'POST',mode:'cors',headers:{'Content-Type':'application/json','X-Refboard-Access':refboardGatewayAccessCode},
+      body:JSON.stringify({images:imageParts})
+    });
+    const data=await resp.json().catch(()=>({}));
+    if(!resp.ok)throw Error(data.error||`서버 요청 실패 (${resp.status})`);
+    const proposed=cleanFacets(data.facets||{});
+    const summary=Object.entries(proposed).filter(([k,v])=>Array.isArray(v)&&v.length).map(([k,v])=>`${FACET_NAMES[k]}: ${v.join(', ')}`).join('\n');
+    if(!summary){showToast('확실하게 분류할 내용이 없습니다.');return;}
+    if(!confirm('GPT 자동 분류 제안입니다. 확인 후 적용할까요?\n\n'+summary))return;
+    it.facets={...cleanFacets(it.facets),...proposed,hex:it.facets?.hex||''};
+    it.classificationSource='openai-worker-reviewed';await saveData();renderBoard();renderDetail();showToast('GPT 분류 적용 및 저장 완료','success');
+  }catch(e){console.error(e);alert('GPT 분류 실패: '+e.message);}
 }
 
 // ─── Initialization ───
 window.addEventListener('DOMContentLoaded',()=>{
   let cachedToken='';
   try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
+  clearLegacyBrowserApiKeys();
   loadLocal();
   normalizeCategoryGroups();
   const taxonomyMigrated=ensureDefaultTaxonomy();
@@ -2264,11 +1998,6 @@ window.addEventListener('DOMContentLoaded',()=>{
   if(repaired.linked||repaired.removed||taxonomyMigrated) saveLocal();
 
   renderAll();
-  onProviderChange();
-
-  if($('ai-copy-target')) $('ai-copy-target').value=localStorage.getItem('refboard_copy_target')||'';
-  if($('ai-copy-mood')) $('ai-copy-mood').value=localStorage.getItem('refboard_copy_mood')||'';
-  if($('ai-copy-brief')) $('ai-copy-brief').value=localStorage.getItem('refboard_copy_brief')||'';
 
   updateDriveUi();
 
