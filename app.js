@@ -651,9 +651,42 @@ function updateAiClassificationStats(){
   const pending=eligible.filter(it=>!isClassified(it)).length;
   el.textContent=`전체 ${total}개 · 분류 완료 ${classified}개 · 분석 가능 미분류 ${pending}개`;
 }
+// The editor link is public routing information, never store an API key here.
+const AI_SCRIPT_PROJECT_URL_KEY='refboard_apps_script_project_url';
+function validateAiScriptProjectUrl(raw){
+  try {
+    const u=new URL(String(raw||'').trim());
+    if(u.protocol!=='https:'||u.hostname!=='script.google.com')return '';
+    if(!/^\/home\/projects\/[A-Za-z0-9_-]+(?:\/edit)?\/?$/.test(u.pathname))return '';
+    return `https://script.google.com${u.pathname.replace(/\/$/,'')}${u.pathname.endsWith('/edit')?'':'/edit'}`;
+  }catch(_){return '';}
+}
+function setAiScriptProjectUrl(){
+  const prev=localStorage.getItem(AI_SCRIPT_PROJECT_URL_KEY)||'';
+  const entered=window.prompt('Apps Script 프로젝트 편집기 주소를 붙여넣으세요.\n예: https://script.google.com/home/projects/프로젝트ID/edit\n(취소하면 변경하지 않습니다.)',prev);
+  if(entered===null)return;
+  if(!entered.trim()){
+    localStorage.removeItem(AI_SCRIPT_PROJECT_URL_KEY);
+    showToast('프로젝트 주소 연결을 해제했습니다.');return;
+  }
+  const url=validateAiScriptProjectUrl(entered);
+  if(!url){showToast('Apps Script 편집기 URL 형식을 확인하세요.','error');return;}
+  localStorage.setItem(AI_SCRIPT_PROJECT_URL_KEY,url);
+  const msg=$('ai-sync-message');if(msg)msg.textContent='프로젝트 주소를 저장했습니다. Apps Script 열기 버튼으로 바로 이동할 수 있습니다.';
+  showToast('Apps Script 프로젝트 연결 완료','success');
+}
 function openAiScriptConsole(){
-  window.open('https://script.google.com/home/projects','_blank','noopener,noreferrer');
-  const msg=$('ai-sync-message');if(msg)msg.textContent='Apps Script에서 classifyNextBatch 실행 → 완료 후 이 페이지의 AI 분류 결과 반영 버튼 클릭';
+  const url=localStorage.getItem(AI_SCRIPT_PROJECT_URL_KEY);
+  if(!url||!validateAiScriptProjectUrl(url)){
+    setAiScriptProjectUrl();
+    const saved=localStorage.getItem(AI_SCRIPT_PROJECT_URL_KEY);
+    if(!saved){return;}
+    // A popup after prompt can be blocked; inform the user and allow a second click.
+    const msg=$('ai-sync-message');if(msg)msg.textContent='프로젝트 주소 연결 완료. Apps Script 열기를 다시 누르면 편집기로 이동합니다.';
+    return;
+  }
+  window.open(url,'_blank','noopener,noreferrer');
+  const msg=$('ai-sync-message');if(msg)msg.textContent='Apps Script에서 classifyNextBatch를 실행하고, 완료 후 여기서 AI 분류 결과 반영을 누르세요.';
 }
 async function syncAiClassificationResults(){
   if(aiSyncBusy)return;

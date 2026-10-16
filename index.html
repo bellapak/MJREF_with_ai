@@ -118,7 +118,7 @@
     </section>
     <section class="ai-sync-strip" aria-label="AI 자동 분류 결과">
       <div class="ai-sync-summary"><span class="ai-sync-dot"></span><div><strong>AI 분류 현황</strong><span id="ai-classification-stats">레퍼런스 상태 확인 중…</span></div></div>
-      <div class="ai-sync-actions"><button type="button" class="ai-sync-subtle" onclick="openAiScriptConsole()">Apps Script에서 일괄 분류 <span aria-hidden="true">↗</span></button><button type="button" class="ai-sync-primary" id="ai-sync-button" onclick="syncAiClassificationResults()">↻ AI 분류 결과 반영</button></div>
+      <div class="ai-sync-actions"><button type="button" class="ai-sync-subtle" onclick="openAiScriptConsole()">Apps Script 열기 <span aria-hidden="true">↗</span></button><button type="button" class="ai-sync-settings" onclick="setAiScriptProjectUrl()" title="Apps Script 프로젝트 주소 설정">연결 설정</button><button type="button" class="ai-sync-primary" id="ai-sync-button" onclick="syncAiClassificationResults()">↻ AI 분류 결과 반영</button></div>
       <p id="ai-sync-message" class="ai-sync-message" role="status">Apps Script의 classifyNextBatch를 실행한 다음, 결과 반영을 눌러 최신 Drive 태그를 가져오세요.</p>
     </section>
     <!-- BOARD TAB -->

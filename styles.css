@@ -1230,3 +1230,6 @@ body{font-size:13px;}
 .ai-sync-primary:disabled{opacity:.5;cursor:wait}
 .ai-sync-message{flex-basis:100%;font-size:10px;color:var(--t2);line-height:1.5;margin:0}
 @media(max-width:640px){.ai-sync-strip{margin:0 10px 10px}.ai-sync-actions{width:100%}.ai-sync-actions button{flex:1}}
+
+.ai-sync-settings{background:transparent;border:1px solid var(--glass-border);color:var(--t2);font-weight:500!important}
+.ai-sync-settings:hover{color:var(--t1);border-color:var(--accent)}
