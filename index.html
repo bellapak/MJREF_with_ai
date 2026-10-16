@@ -34,7 +34,7 @@
   <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
   <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
   <button class="tb-btn" id="gdrive-save-btn"    onclick="saveToDrive()">Drive 저장</button>
-  <button class="tb-btn" id="gdrive-load-btn"    onclick="loadFromDrive()">Drive 불러오기</button>
+  <button class="tb-btn" id="gdrive-load-btn" onclick="loadFromDrive()">Drive 불러오기</button>
   <button class="tb-btn" id="delete-all-btn" style="color:var(--red);border-color:rgba(255,69,58,.35);" onclick="deleteAllItems()" title="모아둔 레퍼런스를 전체 삭제">전체 삭제</button>
 
   <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
@@ -115,6 +115,11 @@
       <div id="search-wrap" class="search-hero-input"><span class="hero-search-symbol">⌕</span><input id="search-input" type="search" placeholder="예: 파란색 프로모션, 증정품, 키치 패키지, 브랜드명…" aria-label="레퍼런스 검색" oninput="debouncedRenderBoard()"><kbd>/</kbd></div>
       <div class="search-hero-bottom"><span id="search-results-label">전체 레퍼런스 탐색</span><div class="search-hero-tools"><button type="button" onclick="clearNavigatorFilters()">조건 초기화</button><span id="count-label">0개</span><div class="view-toggle"><button class="vt-btn active" id="grid-btn" title="그리드 뷰" onclick="setView('grid')">⊞</button><button class="vt-btn" id="list-btn" title="리스트 뷰" onclick="setView('list')">≡</button></div></div></div>
       <div id="active-filter-chips" class="active-filter-chips" aria-live="polite"></div>
+    </section>
+    <section class="ai-sync-strip" aria-label="AI 자동 분류 결과">
+      <div class="ai-sync-summary"><span class="ai-sync-dot"></span><div><strong>AI 분류 현황</strong><span id="ai-classification-stats">레퍼런스 상태 확인 중…</span></div></div>
+      <div class="ai-sync-actions"><button type="button" class="ai-sync-subtle" onclick="openAiScriptConsole()">Apps Script에서 일괄 분류 <span aria-hidden="true">↗</span></button><button type="button" class="ai-sync-primary" id="ai-sync-button" onclick="syncAiClassificationResults()">↻ AI 분류 결과 반영</button></div>
+      <p id="ai-sync-message" class="ai-sync-message" role="status">Apps Script의 classifyNextBatch를 실행한 다음, 결과 반영을 눌러 최신 Drive 태그를 가져오세요.</p>
     </section>
     <!-- BOARD TAB -->
     <div id="board-wrap">

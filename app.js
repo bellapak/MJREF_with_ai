@@ -638,7 +638,42 @@ async function loadFromDrive(){
     saveLocal();
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
-  }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); }
+    return true;
+  }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }
+}
+
+// Google Apps Script performs analysis independently. This static site only imports its Drive results.
+let aiSyncBusy=false;
+function updateAiClassificationStats(){
+  const el=$('ai-classification-stats'); if(!el)return;
+  const total=items.length, classified=items.filter(isClassified).length;
+  const eligible=items.filter(it=>(it.type==='image'&&!!it.driveFileId)||(it.type==='carousel'&&Array.isArray(it.carousel)&&it.carousel.some(s=>!!s.driveFileId)));
+  const pending=eligible.filter(it=>!isClassified(it)).length;
+  el.textContent=`전체 ${total}개 · 분류 완료 ${classified}개 · 분석 가능 미분류 ${pending}개`;
+}
+function openAiScriptConsole(){
+  window.open('https://script.google.com/home/projects','_blank','noopener,noreferrer');
+  const msg=$('ai-sync-message');if(msg)msg.textContent='Apps Script에서 classifyNextBatch 실행 → 완료 후 이 페이지의 AI 분류 결과 반영 버튼 클릭';
+}
+async function syncAiClassificationResults(){
+  if(aiSyncBusy)return;
+  if(!(gdriveToken||restoreCachedDriveToken())){
+    const msg=$('ai-sync-message');if(msg)msg.textContent='먼저 상단 Google 연결 버튼으로 Drive 로그인한 후 다시 시도하세요.';
+    showToast('먼저 Google Drive에 연결하세요.','error');return;
+  }
+  const before=new Map(items.map(it=>[it.id,JSON.stringify(it.facets||{})]));
+  const button=$('ai-sync-button'), msg=$('ai-sync-message');
+  aiSyncBusy=true;if(button){button.disabled=true;button.textContent='불러오는 중…';}
+  if(msg)msg.textContent='Google Drive의 최신 분류 결과를 가져오는 중입니다. 이 작업은 GPT 분석을 실행하지 않습니다.';
+  try{
+    const ok=await loadFromDrive();
+    if(!ok)throw new Error('Drive 불러오기에 실패했습니다.');
+    const changed=items.filter(it=>before.has(it.id)&&before.get(it.id)!==JSON.stringify(it.facets||{})).length;
+    const newlyClassified=items.filter(it=>before.has(it.id)&&before.get(it.id)===JSON.stringify({})&&isClassified(it)).length;
+    updateAiClassificationStats();
+    if(msg)msg.textContent=`최신 결과 반영 완료 · 분류 태그 변경 ${changed}개${newlyClassified?` · 신규 분류 ${newlyClassified}개`:''}. 변경이 없다면 Apps Script에서 분류 저장이 완료되었는지 확인하세요.`;
+  }catch(err){if(msg)msg.textContent=err.message||'분류 결과 반영 중 오류가 발생했습니다.';}
+  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 분류 결과 반영';}}
 }
 
 // ─── Image Lazy Loading & Drive API Fetcher ───
@@ -1185,6 +1220,7 @@ function bindDriveMediaRemote(el,it,placeholder=''){
 function renderAll(){
   renderBoard();
   updateDriveUi();
+  updateAiClassificationStats();
 }
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
 function filteredItems(){
