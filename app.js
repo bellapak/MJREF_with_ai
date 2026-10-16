@@ -1966,6 +1966,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   const repaired=repairAndPruneMediaItems();
   if(repaired.linked||repaired.removed||taxonomyMigrated) saveLocal();
 
+  renderFacetFilters();
   renderAll();
   document.addEventListener('keydown',event=>{
     const tag=event.target?.tagName?.toLowerCase();
