@@ -322,12 +322,26 @@ function repairAndPruneMediaItems(){
 }
 
 let driveSaveBusy=false, driveSaveRequested=false, driveSaveError='', driveKnownVersion='', driveDirty=false, driveSaveTimer=null;
+let driveSyncConfirmed=false;
+function driveConnected(){return !!(gdriveToken||restoreCachedDriveToken());}
+function refreshDriveSaveStatus(){
+  if(!driveConnected()){updateAutosave('local');return;}
+  if(driveSaveError){updateAutosave('error');return;}
+  if(driveSaveBusy||driveSaveRequested||driveDirty){updateAutosave('saving');return;}
+  updateAutosave(driveSyncConfirmed?'saved':'ready');
+}
 function updateAutosave(mode){
   const el=$('autosave-indicator');if(!el)return;
-  const states={saving:['저장 중…','var(--orange)'],saved:['Drive 저장 완료','var(--green)'],error:['Drive 저장 실패 · 재시도','var(--red)'],local:['브라우저에 저장됨 · Drive 연결 필요','var(--t2)']};
-  const [label,color]=states[mode]||states.local;
-  el.textContent=label;el.style.color=color;el.title=mode==='error'?(driveSaveError||label):label;
+  const states={saving:'Drive 저장 중…',saved:'Drive 저장 완료',error:'Drive 저장 실패 · 재시도',local:'브라우저 저장 · Drive 미연결',ready:'Drive 연결됨 · 동기화 필요'};
+  el.textContent=states[mode]||states.local;
   el.dataset.status=mode;
+  el.title=mode==='error'?(driveSaveError||states.error)+' — 클릭하여 재시도':mode==='ready'?'Drive 불러오기로 최신 데이터를 확인하세요.':states[mode];
+}
+function onSaveStatusClick(){
+  const status=$('autosave-indicator')?.dataset.status;
+  if(status==='error')return retryDriveSave();
+  if(status==='ready')return loadFromDrive();
+  if(status==='local')return gdriveSignIn();
 }
 function retryDriveSave(){if(!gdriveToken&&!restoreCachedDriveToken()){gdriveSignIn();return;}driveSaveError='';driveSaveRequested=true;queueDriveSave(0);}
 function queueDriveSave(delay=550){
@@ -343,7 +357,7 @@ async function drainDriveSaveQueue(){
       driveSaveRequested=false;
       const ok=await saveToDrive(true);
       if(!ok){driveSaveRequested=false;updateAutosave('error');break;}
-      if(!driveSaveRequested)updateAutosave('saved');
+      if(!driveSaveRequested)refreshDriveSaveStatus();
     }
   }finally{driveSaveBusy=false;}
 }
@@ -373,7 +387,7 @@ function makePersistableState(){
 
 function saveLocal(){ 
   localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState())); 
-  if(!driveSaveBusy&&!driveSaveRequested)updateAutosave(gdriveToken||restoreCachedDriveToken()?'saved':'local');
+  refreshDriveSaveStatus();
 }
 
 async function saveData(){
@@ -434,10 +448,10 @@ function saveGdriveSetup(){
 
 function updateDriveUi(){
   const connected=!!gdriveToken;
-  const status=$('gdrive-status'); if(status) status.textContent=connected?'Drive 연결됨':'Drive 미연결';
+
   const banner=$('gdrive-setup-banner'); if(banner) banner.style.display=getGapiConfig().clientId?'none':'inline-block';
   const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
-  if(!connected&&!driveDirty)updateAutosave('local');
+  refreshDriveSaveStatus();
 }
 
 async function requestDriveToken(promptMode=''){
@@ -480,7 +494,7 @@ async function gdriveSignIn(){
     await ensureDriveFolder(); 
     await ensureAssetFolder(); 
     showToast('Google Drive 연결 완료','success');
-    if(driveDirty)queueDriveSave(100);else updateAutosave('saved'); 
+    if(driveDirty)queueDriveSave(100);else refreshDriveSaveStatus(); 
   } catch(e){ 
     console.error(e); 
     showToast('Drive 연결 실패: 팝업 차단 해제 또는 API 설정을 확인하세요.','error'); 
@@ -656,7 +670,7 @@ async function saveToDrive(silent=false){
       }finally{ delete slide._uploading; }
     }));
     await uploadDataFile(); 
-    driveDirty=false;driveSaveError='';saveLocal(); 
+    driveDirty=false;driveSaveError='';driveSyncConfirmed=true;saveLocal(); 
     if(!silent) showToast('Drive 저장 완료','success'); 
     
     const df = $('detail-fields');
@@ -770,7 +784,7 @@ async function loadFromDrive(){
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
     ensureDefaultTaxonomy();
-    saveLocal();updateAutosave('saved');
+    driveSyncConfirmed=true;driveSaveError='';saveLocal();refreshDriveSaveStatus();
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;

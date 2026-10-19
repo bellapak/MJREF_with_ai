@@ -38,10 +38,10 @@
 
   <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
   <!-- Google Drive 상태 표시 -->
-  <div id="gdrive-status" style="font-size:11px;color:var(--t3);white-space:nowrap;">Drive 미연결</div>
+
   <!-- Drive Client ID 미설정 시 경고 배너 -->
   <button id="gdrive-setup-banner" onclick="openGdriveSetup()" style="display:none;background:rgba(255,159,10,0.18);border:1px solid rgba(255,159,10,0.45);color:var(--orange);font-family:var(--fn);font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s;">⚙ Drive Client ID 설정 필요</button>
-  <button type="button" id="autosave-indicator" onclick="retryDriveSave()" title="저장 실패 시 클릭해 재시도">브라우저에 저장됨 · Drive 연결 필요</button>
+  <button type="button" id="autosave-indicator" onclick="onSaveStatusClick()" title="Drive 저장 상태">브라우저 저장 · Drive 미연결</button>
   <span class="spacer"></span>
 
 </div>

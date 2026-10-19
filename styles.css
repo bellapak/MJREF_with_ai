@@ -1242,3 +1242,17 @@ body{font-size:13px;}
 #autosave-indicator{font:inherit;font-size:11px;white-space:nowrap;padding:7px 10px;background:var(--s2);border:1px solid var(--b2);border-radius:8px;color:var(--t2);cursor:pointer;max-width:230px;overflow:hidden;text-overflow:ellipsis;}
 #autosave-indicator[data-status="error"]{border-color:var(--red);color:var(--red);}
 #autosave-indicator[data-status="saved"]{border-color:var(--glass-border);}
+
+/* Connection/save state in a single consistent toolbar chip */
+#autosave-indicator{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-height:30px;max-width:none;font-family:var(--fn);font-size:11px;font-weight:500;padding:6px 11px;border-radius:8px;background:var(--s3);border:1px solid var(--b2);color:var(--t2s);white-space:nowrap;cursor:default;transition:border-color .15s,color .15s,background .15s}
+#autosave-indicator::before{content:'';width:6px;height:6px;border-radius:50%;margin-right:7px;background:var(--t3)}
+#autosave-indicator[data-status="saved"]{color:var(--green);background:rgba(48,209,88,.08);border-color:rgba(48,209,88,.22)}
+#autosave-indicator[data-status="saved"]::before{background:var(--green)}
+#autosave-indicator[data-status="saving"]{color:var(--orange);background:rgba(255,159,10,.07);border-color:rgba(255,159,10,.20)}
+#autosave-indicator[data-status="saving"]::before{background:var(--orange)}
+#autosave-indicator[data-status="ready"]{color:var(--t2s);cursor:pointer}
+#autosave-indicator[data-status="ready"]::before{background:var(--accent)}
+#autosave-indicator[data-status="error"]{color:var(--red);background:rgba(255,69,58,.07);border-color:rgba(255,69,58,.3);cursor:pointer}
+#autosave-indicator[data-status="error"]::before{background:var(--red)}
+#autosave-indicator[data-status="local"]{color:var(--t2);cursor:pointer}
+#autosave-indicator[data-status="ready"]:hover,#autosave-indicator[data-status="error"]:hover,#autosave-indicator[data-status="local"]:hover{background:var(--s4)}
