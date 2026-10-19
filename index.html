@@ -33,7 +33,6 @@
   <button class="tb-btn primary" onclick="openAddModal()">+ 추가</button>
   <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
   <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
-  <button class="tb-btn" id="gdrive-save-btn"    onclick="saveToDrive()">Drive 저장</button>
   <button class="tb-btn" id="gdrive-load-btn" onclick="loadFromDrive()">Drive 불러오기</button>
   <button class="tb-btn" id="delete-all-btn" style="color:var(--red);border-color:rgba(255,69,58,.35);" onclick="deleteAllItems()" title="모아둔 레퍼런스를 전체 삭제">전체 삭제</button>
 
@@ -42,7 +41,7 @@
   <div id="gdrive-status" style="font-size:11px;color:var(--t3);white-space:nowrap;">Drive 미연결</div>
   <!-- Drive Client ID 미설정 시 경고 배너 -->
   <button id="gdrive-setup-banner" onclick="openGdriveSetup()" style="display:none;background:rgba(255,159,10,0.18);border:1px solid rgba(255,159,10,0.45);color:var(--orange);font-family:var(--fn);font-size:11px;font-weight:600;padding:5px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s;">⚙ Drive Client ID 설정 필요</button>
-  <div id="autosave-indicator" style="font-size:10px;color:var(--t3);white-space:nowrap;transition:color .3s;" title="자동저장 상태">●</div>
+  <button type="button" id="autosave-indicator" onclick="retryDriveSave()" title="저장 실패 시 클릭해 재시도">브라우저에 저장됨 · Drive 연결 필요</button>
   <span class="spacer"></span>
 
 </div>
@@ -129,12 +128,12 @@
       <div id="board" class="grid-view">
         <div id="drop-zone" tabindex="0"
           ondragover="onDragOver(event)" ondragleave="onDragLeave()" ondrop="onDrop(event)"
-          onclick="dzClick(event)" onpaste="onDzPaste(event)"
+          onclick="dzClick(event)"
           onkeydown="if(event.key==='Enter'||event.key===' ')document.getElementById('file-input').click()">
           <div class="dz-icon">＋</div>
           이미지 · 영상을 드래그하거나<br>
           <span style="color:var(--accent)">클릭해서 파일 선택</span><br>
-          <span style="font-size:11px;color:rgba(235,235,245,0.25)">Ctrl+V 로 이미지 또는 URL 붙여넣기 가능</span><br>
+          <span style="font-size:11px;color:rgba(235,235,245,0.25)">Ctrl+V로 여러 이미지를 함께 붙여넣으면 캐러셀로 묶어요</span><br>
           <button id="paste-btn" onclick="tryClipboardPaste(event)" style="margin-top:8px;background:rgba(10,132,255,0.15);border:1px solid rgba(10,132,255,0.35);color:var(--accent);font-family:var(--fn);font-size:11px;font-weight:500;padding:5px 14px;border-radius:8px;cursor:pointer;transition:all .15s;" onmouseover="this.style.background='rgba(10,132,255,0.25)'" onmouseout="this.style.background='rgba(10,132,255,0.15)'">클립보드에서 붙여넣기</button>
         </div>
         <div id="empty-state" style="display:none">

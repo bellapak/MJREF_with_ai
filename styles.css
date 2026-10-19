@@ -1237,3 +1237,8 @@ body{font-size:13px;}
 
 /* Strategy / Visual split navigator */
 .facet-filter-tree{display:flex;flex-direction:column;gap:5px;margin-top:8px}.navigator-group-heading-secondary{padding-top:12px}.facet-section{display:grid;gap:10px;margin-bottom:8px}.facet-section-title{font-size:12px;font-weight:700;color:var(--t1)}.facet-section-description{font-size:10px;line-height:1.6;color:var(--t2);margin-top:-3px}.facet-legacy-hint{font-size:10px;line-height:1.6;color:var(--t3);padding:4px 0 6px}.card-cat-tag{max-width:100%;overflow:hidden;text-overflow:ellipsis}.detail-section-title + .facet-editor{margin-top:6px;}
+
+/* automatic Drive sync status */
+#autosave-indicator{font:inherit;font-size:11px;white-space:nowrap;padding:7px 10px;background:var(--s2);border:1px solid var(--b2);border-radius:8px;color:var(--t2);cursor:pointer;max-width:230px;overflow:hidden;text-overflow:ellipsis;}
+#autosave-indicator[data-status="error"]{border-color:var(--red);color:var(--red);}
+#autosave-indicator[data-status="saved"]{border-color:var(--glass-border);}
