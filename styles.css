@@ -1233,3 +1233,7 @@ body{font-size:13px;}
 
 .ai-sync-settings{background:transparent;border:1px solid var(--glass-border);color:var(--t2);font-weight:500!important}
 .ai-sync-settings:hover{color:var(--t1);border-color:var(--accent)}
+
+
+/* Strategy / Visual split navigator */
+.facet-filter-tree{display:flex;flex-direction:column;gap:5px;margin-top:8px}.navigator-group-heading-secondary{padding-top:12px}.facet-section{display:grid;gap:10px;margin-bottom:8px}.facet-section-title{font-size:12px;font-weight:700;color:var(--t1)}.facet-section-description{font-size:10px;line-height:1.6;color:var(--t2);margin-top:-3px}.facet-legacy-hint{font-size:10px;line-height:1.6;color:var(--t3);padding:4px 0 6px}.card-cat-tag{max-width:100%;overflow:hidden;text-overflow:ellipsis}.detail-section-title + .facet-editor{margin-top:6px;}

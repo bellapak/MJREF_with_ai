@@ -1,26 +1,68 @@
-# 레퍼런스 탐색기 — Apps Script 바로 가기 및 선택형 예약 트리거
+# 레퍼런스 탐색기 — 전략 탐색 + 비주얼 탐색 개편본
 
-## 적용
-GitHub Pages 저장소에서 `index.html`, `app.js`, `styles.css`를 교체하세요. 레퍼런스와 Drive 데이터 구조는 변경하지 않습니다.
+## 이번 개편 핵심
+- 필터 체계를 **전략 탐색**과 **비주얼 탐색**으로 분리했습니다.
+- 핵심 분류는 실제 의사결정에 맞춘 **8개 필터**로 재구성했습니다.
+- 기존 Drive / GitHub Pages 구조는 유지합니다.
+- 기존 데이터의 레거시 분류(`purpose`, `benefit`, `appeal` 등)는 삭제하지 않고 **호환 보존**합니다.
+- 브라우저에서 데이터를 불러올 때 레거시 분류를 기반으로 새 전략 분류를 **보조 마이그레이션**합니다.
+- Google Apps Script의 GPT 분류 기준도 동일한 새 분류 체계로 맞췄습니다.
 
-## 사이트에서 내 Apps Script로 바로 이동
-1. 본인 Google Apps Script 프로젝트를 열어 브라우저 주소창의 편집기 URL(예: `https://script.google.com/home/projects/프로젝트ID/edit`)을 복사합니다.
-2. 레퍼런스 탐색기 **AI 분류 현황 → 연결 설정** 버튼으로 주소를 등록합니다.
-3. 이제 **Apps Script 열기** 버튼으로 해당 프로젝트 편집기로 바로 이동할 수 있습니다.
-4. `classifyNextBatch`를 수동 실행합니다. 완료 후 탐색기로 돌아와 **AI 분류 결과 반영** 버튼을 클릭합니다.
+## 새 핵심 필터 8개
+1. 활용 목적 (`objective`)
+2. 마케팅 전략 (`strategy`)
+3. 고객 여정 (`journey`)
+4. 프로모션·혜택 (`offer`)
+5. 콘텐츠 역할 (`contentRole`)
+6. 표현 톤 (`tone`)
+7. 적용 채널·매체 (`channel`)
+8. 업종 (`industry`)
 
-프로젝트 주소는 브라우저 localStorage에만 보관하며 API 키는 저장하지 않습니다. 다른 브라우저에서는 다시 설정해야 합니다. 링크를 안다고 스크립트 실행 권한이 생기는 것은 아닙니다.
+## 비주얼 탐색 보조 필터
+- 색상군 (`color`)
+- 비주얼 스타일 (`visual`)
 
-## 선택: 매일 자동으로 미분류 이미지 처리
-이미 설치한 Apps Script `Code.gs`를 이번 ZIP의 `apps_script/Code.gs`로 교체한 뒤 다음 중 필요한 함수를 **직접 한 번 실행**하세요.
-- `installDailyClassificationTrigger`: 매일 오전 9시 전후 `classifyNextBatch`를 실행하는 시간 기반 트리거 1개 설치. 1회 최대 5개 분석.
-- `removeClassificationTriggers`: 위 분석 함수의 예약 트리거 삭제.
+## 기존 데이터 호환 방식
+- 기존 `facets` 안의 레거시 키는 그대로 유지됩니다.
+- 탐색기 UI에서는 새 필터만 전면에 보여줍니다.
+- 상세 편집 저장 시 레거시 키를 날리지 않도록 기존 값을 merge 합니다.
+- 동일 제목 자동 태그 상속도 새 분류 기준을 우선 사용합니다.
 
-오전 9시는 Apps Script 프로젝트에 설정한 시간대 기준이며, 정확한 분에 실행되지 않을 수 있습니다. Google Apps Script **트리거(시계 아이콘)** 메뉴에서 생성/삭제를 확인할 수 있습니다. 자동 분류는 GPT API 사용료를 발생시킬 수 있으므로 필요할 때만 사용하세요. 최초 권한 승인이 필요할 수 있습니다.
+## 적용 파일
+- `index.html`
+- `styles.css`
+- `app.js`
+- `apps_script/Code.gs`
+
+## GitHub Pages 적용
+기존 저장소의 `index.html`, `styles.css`, `app.js`를 교체하세요.
+
+## Apps Script 적용
+기존 Apps Script 프로젝트의 `Code.gs`를 이번 파일로 교체한 뒤 다시 저장하세요.
+### 실행 권장 순서
+1. `checkReferenceConnection`
+2. `previewFirstReference`
+3. `classifyNextBatch`
+
+## Apps Script GPT 분류 설계 메모
+GPT는 이제 다음 판단만 수행합니다.
+- 활용 목적
+- 마케팅 전략
+- 고객 여정
+- 프로모션·혜택
+- 콘텐츠 역할
+- 표현 톤
+- 적용 채널·매체
+- 업종
+- 색상군
+- 비주얼 스타일
+
+반대로 아래 레거시 축은 새 분류 기준의 중심이 아니므로 GPT 기본 출력 대상에서 제외했습니다.
+- 레이아웃
+- 촬영 구도
+- 주요 피사체
+- 시즌/모션 등
 
 ## 주의
-- 사이트 버튼은 편집기를 **여는 버튼**입니다. GitHub Pages에서 Apps Script 함수를 직접 호출하지 않습니다.
-- Apps Script에서 실행 중에는 사이트의 **Drive 저장**을 누르지 마세요. 종료 후 **AI 분류 결과 반영**을 먼저 실행하세요.
-- 기존 Code.gs의 AI 분류 범위는 이미지와 캐러셀이며 영상 자동 분류는 지원하지 않습니다.
-- 보안상 OpenAI API 키는 Apps Script 스크립트 속성에만 보관하세요.
-- JavaScript 구문 검사는 실행할 수 있으나 실제 Google 계정 승인/Drive 동기화는 해당 계정에서 확인이 필요합니다.
+- 전략 분류는 AI의 **추정**입니다. 실제 브랜드의 내부 기획 의도와 100% 동일하다고 보장하지 않습니다.
+- 기존에 레거시 태그만 있던 항목도 브라우저 로드시 일부 자동 변환되지만, 정확도가 중요하면 Apps Script 재분류를 권장합니다.

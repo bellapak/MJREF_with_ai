@@ -96,10 +96,13 @@
       </div>
     </div>
     <hr class="sb-divider">
-    <div class="navigator-group-heading"><span>속성별 분류</span><button type="button" onclick="expandAllFacetTrees(true)">모두 펼치기</button><button type="button" onclick="expandAllFacetTrees(false)">접기</button></div>
+    <div class="navigator-group-heading"><span>전략 탐색</span><button type="button" onclick="expandAllFacetTrees(true)">모두 펼치기</button><button type="button" onclick="expandAllFacetTrees(false)">접기</button></div>
     <select id="classification-filter" class="facet-status" onchange="classificationFilter=this.value;renderBoard()"><option value="all">분류 전체</option><option value="classified">분류 완료</option><option value="unclassified">미분류</option></select>
-    <div class="facet-tip">한 항목 내 복수 선택 가능 · 분류 항목 간 교차 검색</div>
-    <div id="facet-filters"></div>
+    <div class="facet-tip">실제 의사결정 기준 8개 필터를 중심으로 찾습니다. 한 항목 내 복수 선택 가능 · 항목 간 교차 검색</div>
+    <div id="strategy-facet-filters" class="facet-filter-tree"></div>
+    <div class="navigator-group-heading navigator-group-heading-secondary"><span>비주얼 탐색</span></div>
+    <div class="facet-tip">색상과 스타일 중심의 보조 탐색입니다.</div>
+    <div id="visual-facet-filters" class="facet-filter-tree"></div>
 
     <hr class="sb-divider">
     <div class="sb-section">정렬</div>
