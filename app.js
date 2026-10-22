@@ -3,78 +3,36 @@
 // =====================================================
 
 
-
-// 레퍼런스 탐색기: 전략 탐색 + 비주얼 탐색 이중 구조.
-// 전략 탐색은 실제 의사결정에 필요한 8개 축을 중심으로, 비주얼 탐색은 컬러/스타일을 보조적으로 다룹니다.
-const STRATEGY_FACET_KEYS=['objective','strategy','journey','offer','contentRole','tone','channel','industry'];
-const VISUAL_FACET_KEYS=['color','visual'];
-const PRIMARY_FACET_KEYS=[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS];
-const LEGACY_FACET_KEYS=['purpose','benefit','layout','composition','subject','appeal','cta','season','motion'];
+// 레퍼런스 백과: 서로 독립적인 검색 축. 한 축 안 OR, 서로 다른 축 AND.
 const FACETS={
-  objective:['신제품 런칭','브랜드 인지도','구매 전환','재구매/리텐션','팬덤/커뮤니티','프로모션 홍보','이벤트 참여 유도','브랜드 경험/세계관'],
-  strategy:['문제 해결','차별화/USP','기능/효능 증명','가격/가치 설득','사회적 증거','희소성/긴급성','감성/라이프스타일','유머/밈/화제성'],
-  journey:['발견','관심 유도','비교·검토','구매 직전','구매','재구매','공유/추천'],
-  offer:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','혜택 없음'],
-  contentRole:['후킹','제품 이해','기능 설명','신뢰 형성','구매 설득','참여 유도','브랜드 무드/세계관','리뷰/UGC 활용'],
-  tone:['위트/유머','친근함','직설적','담백함','감성적','프리미엄','전문적','도발적','키치/발랄'],
-  channel:['SNS 콘텐츠','퍼포먼스 광고','상세페이지/PDP','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','굿즈'],
-  industry:['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타'],
-  color:['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크','브라운','베이지','화이트','그레이','블랙','멀티컬러'],
-  visual:['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실','일러스트','3D/CG','타이포그래피','포토그래픽'],
-  // Legacy facets preserved for backward compatibility. They are not primary navigator filters.
-  purpose:['광고','SNS 콘텐츠','상세페이지','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','UI/UX','굿즈','기타'],
-  benefit:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
-  layout:['중앙 정렬','좌우 분할','그리드','비대칭','콜라주','풀블리드','카드형','큰 타이포','여백 중심','정보 밀집'],
-  composition:['정면','탑뷰/플랫레이','클로즈업','매크로','아이레벨','로우앵글','인물 중심','제품 단독','사용 장면'],
-  subject:['제품','인물','캐릭터','타이포그래피','공간/인테리어','자연','소품','음식','패키지','UI 화면'],
-  appeal:['문제 해결','기능/성능','가격/가치','사회적 증거','열망/라이프스타일','희소성/긴급성','호기심/반전','유머/밈','감성/스토리'],
-  cta:['구매 유도','탐색/더보기','가입/구독','참여/응모','저장/공유','방문/예약','CTA 없음'],
-  season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
-  motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
+ purpose:['광고','SNS 콘텐츠','상세페이지','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','UI/UX','굿즈','기타'],
+ industry:['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타'],
+ benefit:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
+ color:['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크','브라운','베이지','화이트','그레이','블랙','멀티컬러'],
+ visual:['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실','일러스트','3D/CG','타이포그래피','포토그래픽'],
+ layout:['중앙 정렬','좌우 분할','그리드','비대칭','콜라주','풀블리드','카드형','큰 타이포','여백 중심','정보 밀집'],
+ composition:['정면','탑뷰/플랫레이','클로즈업','매크로','아이레벨','로우앵글','인물 중심','제품 단독','사용 장면'],
+ subject:['제품','인물','캐릭터','타이포그래피','공간/인테리어','자연','소품','음식','패키지','UI 화면'],
+ appeal:['문제 해결','기능/성능','가격/가치','사회적 증거','열망/라이프스타일','희소성/긴급성','호기심/반전','유머/밈','감성/스토리'],
+ tone:['위트/유머','도발적','친근함','담백함','전문적','감성적','직설적','고급스러움','실험적'],
+ cta:['구매 유도','탐색/더보기','가입/구독','참여/응모','저장/공유','방문/예약','CTA 없음'],
+ season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
+ motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
 };
-const FACET_NAMES={
-  objective:'활용 목적', strategy:'마케팅 전략', journey:'고객 여정', offer:'프로모션·혜택', contentRole:'콘텐츠 역할', tone:'표현 톤', channel:'적용 채널·매체', industry:'업종',
-  color:'색상군', visual:'비주얼 스타일',
-  purpose:'레거시 · 용도', benefit:'레거시 · 혜택·프로모션', layout:'레거시 · 레이아웃', composition:'레거시 · 촬영·구도', subject:'레거시 · 주요 피사체', appeal:'레거시 · 카피 소구', cta:'레거시 · CTA 유형', season:'레거시 · 시즌·이벤트', motion:'레거시 · 영상 스타일'
-};
+const FACET_NAMES={purpose:'용도',industry:'업종',benefit:'혜택·프로모션',color:'색상군',visual:'비주얼 스타일',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'카피 소구',tone:'카피 톤',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
 let facetFilters={};let classificationFilter='all';
 function cleanFacets(value){const result={};Object.keys(FACETS).forEach(k=>{result[k]=Array.isArray(value?.[k])?value[k].filter(v=>FACETS[k].includes(v)):[];});return result;}
 const COLOR_SWATCHES={'레드':'#EA4045','오렌지':'#F28B35','옐로':'#F2C84B','그린':'#4DAD69','민트':'#58C8B9','블루':'#3A85E8','퍼플':'#8755CB','핑크':'#ED80B3','브라운':'#986C4A','베이지':'#CBB99C','화이트':'#F5F5F5','그레이':'#95999F','블랙':'#202124','멀티컬러':'linear-gradient(120deg,#ef5050,#f3d453,#58bd8c,#487de9,#a25cdb)'};
-const FACET_GROUPS={
-  objective:[['브랜드/비즈니스 목표',['신제품 런칭','브랜드 인지도','구매 전환','재구매/리텐션','팬덤/커뮤니티','프로모션 홍보','이벤트 참여 유도','브랜드 경험/세계관']]],
-  strategy:[['설득 방식',['문제 해결','차별화/USP','기능/효능 증명','가격/가치 설득','사회적 증거','희소성/긴급성','감성/라이프스타일','유머/밈/화제성']]],
-  journey:[['고객 단계',['발견','관심 유도','비교·검토','구매 직전','구매','재구매','공유/추천']]],
-  offer:[['프로모션 구조',['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','혜택 없음']]],
-  contentRole:[['콘텐츠의 실무 역할',['후킹','제품 이해','기능 설명','신뢰 형성','구매 설득','참여 유도','브랜드 무드/세계관','리뷰/UGC 활용']]],
-  tone:[['표현 톤',['위트/유머','친근함','직설적','담백함','감성적','프리미엄','전문적','도발적','키치/발랄']]],
-  channel:[['실제 적용 매체',['SNS 콘텐츠','퍼포먼스 광고','상세페이지/PDP','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','굿즈']]],
-  industry:[['업종',['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타']]],
-  color:[['컬러 계열',['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크']],['뉴트럴',['브라운','베이지','화이트','그레이','블랙']],['복합',['멀티컬러']]],
-  visual:[['분위기',['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실']],['제작 방식',['일러스트','3D/CG','타이포그래피','포토그래픽']]]
-};
-const FACET_DESCRIPTIONS={
-  objective:'이 사례를 어떤 업무 목적에서 참고할지 기준으로 분류합니다.',
-  strategy:'메시지가 무엇으로 설득하는지 고릅니다. 실제 기획 의도가 아니라 레퍼런스가 보여주는 설득 방식 기준입니다.',
-  journey:'고객이 어떤 구매 단계에서 이 레퍼런스를 보게 될지 판단합니다.',
-  offer:'실제로 노출된 혜택만 선택합니다. 제품 효능은 여기보다 마케팅 전략 또는 콘텐츠 역할로 해석하세요.',
-  contentRole:'이 콘텐츠가 의사결정 과정에서 어떤 역할을 하는지 분류합니다.',
-  tone:'문체와 인상 기준으로 선택합니다.',
-  channel:'디자인 산출물이 쓰인 매체나 포맷 기준입니다.',
-  industry:'카테고리/업종 기준입니다.',
-  color:'비주얼 탐색용 보조 필터입니다. 대표 컬러를 복수 선택할 수 있습니다.',
-  visual:'비주얼 탐색용 보조 필터입니다. 스타일과 제작 방식을 함께 선택할 수 있습니다.'
-};
-const PRIMARY_OPEN_KEYS=['objective','strategy','offer','contentRole','color','visual'];
+const FACET_GROUPS={color:[['컬러 계열',['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크']],['뉴트럴',['브라운','베이지','화이트','그레이','블랙']],['복합',['멀티컬러']]],visual:[['표현 분위기',['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실']],['비주얼 제작 방식',['일러스트','3D/CG','타이포그래피','포토그래픽']]]};
+const FACET_DESCRIPTIONS={color:'이미지에서 눈에 띄는 주요 색상 복수 선택 · HEX는 별도 입력',visual:'분위기와 표현 매체는 서로 다릅니다. 해당하는 요소를 각각 선택하세요.'};
 function facetOptionHTML(key,v,checked,prefix){const swatch=key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:'';return `<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${checked?'checked':''}><span>${swatch}${esc(v)}</span></label>`;}
 function facetGroupContent(key,options,selected,prefix){if(!FACET_GROUPS[key])return `<div class="facet-chips">${options.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div>`;return FACET_GROUPS[key].map(([name,subset])=>`<div class="facet-choice-group"><div class="facet-choice-group-title">${name}</div><div class="facet-chips">${subset.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`).join('');}
-function facetFieldsBlockHTML(keys,prefix,selected){return keys.map(key=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,FACETS[key],selected[key],prefix)}</section>`).join('');}
-function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);const legacyCount=LEGACY_FACET_KEYS.reduce((sum,key)=>sum+(selected[key]?.length||0),0);return `<section class="facet-section"><div class="facet-section-title">전략 탐색</div><div class="facet-section-description">실무 의사결정 기준으로 고르는 핵심 8개 필터입니다.</div>${facetFieldsBlockHTML(STRATEGY_FACET_KEYS,prefix,selected)}</section><section class="facet-section"><div class="facet-section-title">비주얼 탐색</div><div class="facet-section-description">색상과 스타일을 보조적으로 기록합니다.</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section>${legacyCount?`<div class="facet-legacy-hint">기존 분류 ${legacyCount}개는 호환성을 위해 보존됩니다. 현재 편집 화면에서는 전략·비주얼 핵심 분류만 노출합니다.</div>`:''}`;}
-function readFacetFields(prefix,base={}){const result={...cleanFacets(base)};const editableFacetKeys=[...PRIMARY_FACET_KEYS];editableFacetKeys.forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=base?.hex||'';return result;}
-function renderFacetFilterCollection(rootId,keys){const root=$(rootId);if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=keys.map(key=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&PRIMARY_OPEN_KEYS.includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',FACETS[key]]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});}
-function renderFacetFilters(){renderFacetFilterCollection('strategy-facet-filters',STRATEGY_FACET_KEYS);renderFacetFilterCollection('visual-facet-filters',VISUAL_FACET_KEYS);updateFacetFilterCounts();}
-function updateFacetFilterCounts(){[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS].forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
+function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,options])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,options,selected[key],prefix)}</section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
+function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex='';}return result;}
+function renderFacetFilters(){const root=$('facet-filters');if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&['purpose','benefit','color','visual'].includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',opts]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
+function updateFacetFilterCounts(){Object.keys(FACETS).forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
 function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
-function expandAllFacetTrees(open){document.querySelectorAll('.facet-filter-tree details').forEach(d=>d.open=open);}
+function expandAllFacetTrees(open){document.querySelectorAll('#facet-filters details').forEach(d=>d.open=open);}
 function clearNavigatorFilters(){
   facetFilters={};classificationFilter='all';currentFilter='all';currentCatFilter=null;
   const field=$('search-input');if(field)field.value='';
@@ -84,7 +42,7 @@ function clearNavigatorFilters(){
 }
 function removeFacetChip(key,value){
   facetFilters[key]=(facetFilters[key]||[]).filter(v=>v!==value);
-  const input=[...document.querySelectorAll('.facet-filter-tree input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
+  const input=[...document.querySelectorAll('#facet-filters input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
   if(input)input.checked=false;
   updateFacetFilterCounts();renderBoard();
 }
@@ -102,57 +60,12 @@ function renderNavigatorChips(){
 // 미확인/기본 제목은 공유하지 않고 기타 메모, 출처, 미디어는 절대 덮어쓰지 않습니다.
 function normalizedReferenceTitle(title){const v=String(title||'').normalize('NFKC').replace(/\s+/g,' ').trim().toLocaleLowerCase();return (!v||['제목없음','untitled','image','붙여넣기 이미지'].includes(v))?'':v;}
 function sameTitleReferences(title,excludeId){const key=normalizedReferenceTitle(title);return key?items.filter(it=>it.id!==excludeId&&normalizedReferenceTitle(it.title)===key):[];}
-function hasPrimaryClassification(facets){return PRIMARY_FACET_KEYS.some(k=>Array.isArray(facets?.[k])&&facets[k].length>0);}
-function isEmptyClassification(facets){return !hasPrimaryClassification(facets)&&!facets?.hex;}
+function isEmptyClassification(facets){return !Object.keys(FACETS).some(k=>Array.isArray(facets?.[k])&&facets[k].length>0)&&!facets?.hex;}
 function matchingClassification(title,excludeId){return sameTitleReferences(title,excludeId).find(it=>!isEmptyClassification(it.facets))?.facets||null;}
 function synchronizeTitleFacets(source){const duplicates=sameTitleReferences(source.title,source.id);for(const item of duplicates)item.facets={...cleanFacets(source.facets),hex:source.facets?.hex||''};return duplicates.length;}
 function inheritTitleFacets(item){const existing=matchingClassification(item.title,item.id);if(existing&&isEmptyClassification(item.facets))item.facets={...cleanFacets(existing),hex:existing.hex||''};}
-function isClassified(it){return hasPrimaryClassification(cleanFacets(it.facets));}
-function legacyMemo(it){return [it.notes,it.visualNotes&&`[기존 비주얼 메모]
-${it.visualNotes}`,it.contentNotes&&`[기존 콘텐츠 메모]
-${it.contentNotes}`,it.caption&&`[기존 본문]
-${it.caption}`,it.imageCopy&&`[기존 이미지 카피]
-${it.imageCopy}`,it.hook&&`[기존 훅]
-${it.hook}`,it.cta&&`[기존 CTA]
-${it.cta}`].filter(Boolean).join('\n\n');}
-const LEGACY_CHANNEL_MAP={광고:'퍼포먼스 광고','SNS 콘텐츠':'SNS 콘텐츠','상세페이지':'상세페이지/PDP','랜딩페이지':'랜딩페이지','패키지':'패키지','브랜딩/BX':'브랜딩/BX','오프라인/VMD':'오프라인/VMD','굿즈':'굿즈'};
-const LEGACY_APPEAL_TO_STRATEGY={'문제 해결':'문제 해결','기능/성능':'기능/효능 증명','가격/가치':'가격/가치 설득','사회적 증거':'사회적 증거','열망/라이프스타일':'감성/라이프스타일','희소성/긴급성':'희소성/긴급성','유머/밈':'유머/밈/화제성','감성/스토리':'감성/라이프스타일'};
-const LEGACY_BENEFIT_TO_OFFER={'가격 할인':'가격 할인','정액 할인':'정액 할인','쿠폰':'쿠폰','무료배송':'무료배송','증정품/GWP':'증정품/GWP','1+1/번들':'1+1/번들','적립/포인트':'적립/포인트','멤버십':'멤버십','한정/선착순':'한정/선착순','체험/샘플':'체험/샘플','기타/없음':'혜택 없음'};
-function pushUniqueFacetValue(bucket,key,value){if(!value||!FACETS[key]?.includes(value))return;bucket[key]=bucket[key]||[];if(!bucket[key].includes(value))bucket[key].push(value);}
-function migrateLegacyFacetsToDecisionModel(facets={}){
-  const next={...cleanFacets(facets),hex:facets?.hex||''};
-  (next.purpose||[]).forEach(v=>pushUniqueFacetValue(next,'channel',LEGACY_CHANNEL_MAP[v]||''));
-  (next.appeal||[]).forEach(v=>pushUniqueFacetValue(next,'strategy',LEGACY_APPEAL_TO_STRATEGY[v]||''));
-  (next.benefit||[]).forEach(v=>pushUniqueFacetValue(next,'offer',LEGACY_BENEFIT_TO_OFFER[v]||''));
-  if(!(next.objective||[]).length){
-    if((next.offer||[]).some(v=>v!=='혜택 없음')){pushUniqueFacetValue(next,'objective','프로모션 홍보');pushUniqueFacetValue(next,'objective','구매 전환');}
-    if((next.purpose||[]).includes('광고')||(next.purpose||[]).includes('상세페이지')||(next.purpose||[]).includes('랜딩페이지'))pushUniqueFacetValue(next,'objective','구매 전환');
-    if((next.purpose||[]).includes('SNS 콘텐츠'))pushUniqueFacetValue(next,'objective','브랜드 인지도');
-    if((next.purpose||[]).includes('브랜딩/BX')||(next.purpose||[]).includes('오프라인/VMD'))pushUniqueFacetValue(next,'objective','브랜드 경험/세계관');
-    if((next.purpose||[]).includes('굿즈'))pushUniqueFacetValue(next,'objective','팬덤/커뮤니티');
-    if((next.appeal||[]).includes('열망/라이프스타일')||(next.appeal||[]).includes('감성/스토리'))pushUniqueFacetValue(next,'objective','브랜드 인지도');
-  }
-  if(!(next.contentRole||[]).length){
-    if((next.purpose||[]).includes('SNS 콘텐츠'))pushUniqueFacetValue(next,'contentRole','후킹');
-    if((next.purpose||[]).includes('상세페이지')||(next.purpose||[]).includes('랜딩페이지')){pushUniqueFacetValue(next,'contentRole','제품 이해');pushUniqueFacetValue(next,'contentRole','구매 설득');}
-    if((next.appeal||[]).includes('사회적 증거'))pushUniqueFacetValue(next,'contentRole','신뢰 형성');
-    if((next.appeal||[]).includes('기능/성능'))pushUniqueFacetValue(next,'contentRole','기능 설명');
-    if((next.appeal||[]).includes('유머/밈')||(next.tone||[]).includes('위트/유머'))pushUniqueFacetValue(next,'contentRole','후킹');
-    if((next.purpose||[]).includes('브랜딩/BX')||(next.purpose||[]).includes('오프라인/VMD')||(next.purpose||[]).includes('굿즈'))pushUniqueFacetValue(next,'contentRole','브랜드 무드/세계관');
-  }
-  if(!(next.journey||[]).length){
-    if((next.purpose||[]).includes('광고')||(next.purpose||[]).includes('SNS 콘텐츠'))pushUniqueFacetValue(next,'journey','발견');
-    if((next.appeal||[]).length)pushUniqueFacetValue(next,'journey','관심 유도');
-    if((next.purpose||[]).includes('상세페이지')||(next.purpose||[]).includes('랜딩페이지'))pushUniqueFacetValue(next,'journey','비교·검토');
-    if((next.offer||[]).some(v=>v!=='혜택 없음'))pushUniqueFacetValue(next,'journey','구매 직전');
-    if((next.purpose||[]).includes('굿즈'))pushUniqueFacetValue(next,'journey','공유/추천');
-  }
-  if((next.tone||[]).includes('고급스러움')){next.tone=next.tone.filter(v=>v!=='고급스러움');pushUniqueFacetValue(next,'tone','프리미엄');}
-  if((next.tone||[]).includes('실험적')){next.tone=next.tone.filter(v=>v!=='실험적');pushUniqueFacetValue(next,'tone','도발적');}
-  return next;
-}
-function migrateDecisionFacetsOnItem(item){if(!item)return item;item.facets=migrateLegacyFacetsToDecisionModel(item.facets||{});return item;}
-function migrateDecisionFacetsOnItems(){let changed=0;items.forEach(it=>{const before=JSON.stringify(it.facets||{});migrateDecisionFacetsOnItem(it);if(JSON.stringify(it.facets||{})!==before)changed++;});return changed;}
+function isClassified(it){return Object.values(cleanFacets(it.facets)).some(arr=>arr.length>0);}
+function legacyMemo(it){return [it.notes,it.visualNotes&&`[기존 비주얼 메모]\n${it.visualNotes}`,it.contentNotes&&`[기존 콘텐츠 메모]\n${it.contentNotes}`,it.caption&&`[기존 본문]\n${it.caption}`,it.imageCopy&&`[기존 이미지 카피]\n${it.imageCopy}`,it.hook&&`[기존 훅]\n${it.hook}`,it.cta&&`[기존 CTA]\n${it.cta}`].filter(Boolean).join('\n\n');}
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
 const DRIVE_SCOPE='https://www.googleapis.com/auth/drive';
@@ -165,6 +78,7 @@ const GDRIVE_TOKEN_STORE_KEY='refboard_google_access_token_v36';
 const GDRIVE_TOKEN_EXP_KEY='refboard_google_access_token_exp_v36';
 const GDRIVE_HAS_AUTH_KEY='refboard_google_has_auth_v36';
 const DELETED_DRIVE_IDS_KEY='refboard_deleted_drive_ids_v34';
+const MANUAL_DRIVE_DIRTY_KEY='refboard_manual_drive_pending_v1';
 
 let groups=[];
 let categories=[];
@@ -321,45 +235,16 @@ function repairAndPruneMediaItems(){
   return {linked,removed};
 }
 
-let driveSaveBusy=false, driveSaveRequested=false, driveSaveError='', driveKnownVersion='', driveDirty=false, driveSaveTimer=null;
-let driveSyncConfirmed=false;
-function driveConnected(){return !!(gdriveToken||restoreCachedDriveToken());}
-function refreshDriveSaveStatus(){
-  if(!driveConnected()){updateAutosave('local');return;}
-  if(driveSaveError){updateAutosave('error');return;}
-  if(driveSaveBusy||driveSaveRequested||driveDirty){updateAutosave('saving');return;}
-  updateAutosave(driveSyncConfirmed?'saved':'ready');
+// 브라우저에는 자동 저장하지만, Google Drive에는 사용자가 버튼을 누를 때만 저장합니다.
+function isManualDrivePending(){ return localStorage.getItem(MANUAL_DRIVE_DIRTY_KEY)==='1'; }
+function setManualDrivePending(pending){
+  if(pending) localStorage.setItem(MANUAL_DRIVE_DIRTY_KEY,'1');
+  else localStorage.removeItem(MANUAL_DRIVE_DIRTY_KEY);
+  updateDriveUi();
 }
 function updateAutosave(mode){
-  const el=$('autosave-indicator');if(!el)return;
-  const states={saving:'Drive 저장 중…',saved:'Drive 저장 완료',error:'Drive 저장 실패 · 재시도',local:'브라우저 저장 · Drive 미연결',ready:'Drive 연결됨 · 동기화 필요'};
-  el.textContent=states[mode]||states.local;
-  el.dataset.status=mode;
-  el.title=mode==='error'?(driveSaveError||states.error)+' — 클릭하여 재시도':mode==='ready'?'Drive 불러오기로 최신 데이터를 확인하세요.':states[mode];
-}
-function onSaveStatusClick(){
-  const status=$('autosave-indicator')?.dataset.status;
-  if(status==='error')return retryDriveSave();
-  if(status==='ready')return loadFromDrive();
-  if(status==='local')return gdriveSignIn();
-}
-function retryDriveSave(){if(!gdriveToken&&!restoreCachedDriveToken()){gdriveSignIn();return;}driveSaveError='';driveSaveRequested=true;queueDriveSave(0);}
-function queueDriveSave(delay=550){
-  if(!gdriveToken&&!restoreCachedDriveToken()){updateAutosave('local');return;}
-  driveSaveRequested=true;updateAutosave('saving');clearTimeout(driveSaveTimer);
-  driveSaveTimer=setTimeout(drainDriveSaveQueue,delay);
-}
-async function drainDriveSaveQueue(){
-  if(driveSaveBusy||!driveSaveRequested)return;
-  driveSaveBusy=true;
-  try{
-    while(driveSaveRequested){
-      driveSaveRequested=false;
-      const ok=await saveToDrive(true);
-      if(!ok){driveSaveRequested=false;updateAutosave('error');break;}
-      if(!driveSaveRequested)refreshDriveSaveStatus();
-    }
-  }finally{driveSaveBusy=false;}
+  const el=$('autosave-indicator');
+  if(el){ el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'브라우저에 저장 중':'브라우저 로컬 저장 완료 (Google Drive는 수동 저장)'; }
 }
 function loadLocal(){
   try{
@@ -367,9 +252,7 @@ function loadLocal(){
     groups=Array.isArray(raw.groups)?raw.groups:[];
     categories=Array.isArray(raw.categories)?raw.categories:[];
     items=Array.isArray(raw.items)?raw.items.map(normalizeItem):[];
-    const decisionMigrated=migrateDecisionFacetsOnItems();
     state={groups,categories,items};
-    if(decisionMigrated) localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState()));
   }catch(e){ console.warn(e); }
 }
 
@@ -385,17 +268,17 @@ function makePersistableState(){
   return {groups,categories,items:items.map(cleanItem)};
 }
 
-function saveLocal(){ 
-  localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState())); 
-  refreshDriveSaveStatus();
+function saveLocal(){
+  localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState()));
+  updateAutosave('saved');
 }
 
 async function saveData(){
   updateAutosave('saving');
   const localCachePromise=cachePendingLocalFiles().catch(console.warn);
   saveLocal();
+  setManualDrivePending(true); // 변경사항은 로컬에 보관하고, Drive 저장은 실행하지 않음
   await localCachePromise;
-  driveDirty=true;queueDriveSave();
 }
 
 // ─── Google Drive Auth ───
@@ -448,10 +331,17 @@ function saveGdriveSetup(){
 
 function updateDriveUi(){
   const connected=!!gdriveToken;
-
+  const status=$('gdrive-status');
+  if(status){
+    const pending=isManualDrivePending();
+    status.textContent=connected?(pending?'Drive 저장 필요':'Drive 연결됨 · 수동 저장'):(pending?'로컬 변경됨 · Drive 미연결':'Drive 미연결');
+    status.title=pending?'변경사항은 브라우저에만 저장되어 있습니다. Drive 저장을 눌러 반영하세요.':'Google Drive 자동 저장이 꺼져 있습니다.';
+    status.style.color=pending?'var(--orange)':'var(--t3)';
+  }
+  const saveBtn=$('gdrive-save-btn');
+  if(saveBtn) saveBtn.title=isManualDrivePending()?'Drive에 저장되지 않은 로컬 변경사항이 있습니다. 클릭하면 저장합니다.':'Google Drive에 수동 저장';
   const banner=$('gdrive-setup-banner'); if(banner) banner.style.display=getGapiConfig().clientId?'none':'inline-block';
   const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
-  refreshDriveSaveStatus();
 }
 
 async function requestDriveToken(promptMode=''){
@@ -493,8 +383,7 @@ async function gdriveSignIn(){
     await ensureDriveToken(true); 
     await ensureDriveFolder(); 
     await ensureAssetFolder(); 
-    showToast('Google Drive 연결 완료','success');
-    if(driveDirty)queueDriveSave(100);else refreshDriveSaveStatus(); 
+    showToast('Google Drive 연결 완료','success'); 
   } catch(e){ 
     console.error(e); 
     showToast('Drive 연결 실패: 팝업 차단 해제 또는 API 설정을 확인하세요.','error'); 
@@ -609,35 +498,23 @@ async function uploadDataFile(){
   const safeState=makePersistableState();
   const blob=new Blob([JSON.stringify(safeState,null,2)],{type:'application/json'});
   if(gdriveDataFileId){
-    const meta=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveDataFileId}?fields=id,modifiedTime`)).json();
-    if(driveKnownVersion&&meta.modifiedTime&&meta.modifiedTime!==driveKnownVersion){
-      throw new Error('Drive 데이터가 다른 곳에서 수정되었습니다. 최신 Drive 불러오기 후 다시 저장하세요.');
-    }
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
-    const existing=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',folderId);
-    if(existing)throw new Error('Drive에 기존 데이터가 있습니다. Drive 불러오기를 먼저 실행하세요.');
     const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId); gdriveDataFileId=f.id;
   }
-  if(gdriveDataFileId){const latest=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveDataFileId}?fields=modifiedTime`)).json();driveKnownVersion=latest.modifiedTime||'';}
 }
 
 async function saveToDrive(silent=false){
   try{
     await ensureDriveToken(); await ensureDriveFolder();
-    // 사전 충돌 검사: 파일 업로드/삭제 전에 원본 Drive 버전을 확인합니다.
-    const serverData=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
-    if(serverData){
-      if(!gdriveDataFileId||gdriveDataFileId!==serverData.id||!driveKnownVersion){throw new Error('첫 자동 저장 전 Drive 불러오기로 최신 데이터를 확인하세요.');}
-      const serverMeta=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${serverData.id}?fields=modifiedTime`)).json();
-      if(serverMeta.modifiedTime!==driveKnownVersion)throw new Error('Drive 데이터가 Apps Script 또는 다른 화면에서 수정되었습니다. 새로 불러온 뒤 저장하세요.');
-    }
 
     // 🔄 양방향 동기화: 사이트 안에서 삭제된 컨텐츠가 있으면 저장 시점에 Drive에서도 함께 삭제
     const pendingDeleteIds=[...getDeletedDriveIds()];
     if(pendingDeleteIds.length){
-      await Promise.allSettled(pendingDeleteIds.map(deleteDriveFile));
-      persistDeletedDriveIds(new Set());
+      const deletionResults=await Promise.allSettled(pendingDeleteIds.map(deleteDriveFile));
+      const failedIds=pendingDeleteIds.filter((_,index)=>deletionResults[index].status==='rejected');
+      persistDeletedDriveIds(new Set(failedIds));
+      if(failedIds.length) throw new Error(`Drive 파일 ${failedIds.length}개 삭제에 실패했습니다. 삭제 예약은 보존됩니다.`);
     }
 
     // ⚠️ 경쟁 조건 방지: saveData()가 짧은 간격으로 여러 번 호출되면 saveToDrive()도 겹쳐서 실행될 수 있음.
@@ -669,9 +546,10 @@ async function saveToDrive(silent=false){
         delete slide._file;
       }finally{ delete slide._uploading; }
     }));
-    await uploadDataFile(); 
-    driveDirty=false;driveSaveError='';driveSyncConfirmed=true;saveLocal(); 
-    if(!silent) showToast('Drive 저장 완료','success'); 
+    await uploadDataFile();
+    saveLocal();
+    setManualDrivePending(false);
+    if(!silent) showToast('Google Drive 수동 저장 완료','success'); 
     
     const df = $('detail-fields');
     if(df && selectedId) {
@@ -683,8 +561,7 @@ async function saveToDrive(silent=false){
           }
        }
     }
-    return true;
-  }catch(e){ console.error(e);driveSaveError=e.message||'Drive 저장 실패';if(!silent) showToast(driveSaveError,'error');return false; }
+  }catch(e){ console.error(e); setManualDrivePending(true); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
 }
 
 async function syncItemsWithDriveAssets(){
@@ -765,30 +642,33 @@ async function syncItemsWithDriveAssets(){
 }
 
 async function loadFromDrive(){
-  if(driveSaveBusy||driveSaveRequested||driveDirty){showToast('저장 대기 중인 변경사항이 있습니다. 저장 완료 후 불러오세요.','error');return false;}
+  if(isManualDrivePending() && !confirm('Drive에 저장되지 않은 로컬 변경사항이 있습니다.\nDrive 데이터를 불러오면 로컬 변경사항이 사라질 수 있습니다. 계속할까요?')) return false;
+  const previousPendingDeletes=getDeletedDriveIds();
   try{
+    // 명시적으로 불러오기를 선택한 경우 로컬 삭제 예약은 임시 해제합니다.
+    // 불러오기 실패 시 기존 삭제 예약을 복원합니다.
+    persistDeletedDriveIds(new Set());
     await ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
     const f=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
-    const deleted=getDeletedDriveIds();
+    const deleted=new Set();
     if(f){
       gdriveDataFileId=f.id;
-      const fileMeta=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?fields=modifiedTime`)).json();
-      driveKnownVersion=fileMeta.modifiedTime||'';
       const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).json();
       groups=Array.isArray(data.groups)?data.groups:[];
       categories=Array.isArray(data.categories)?data.categories:[];
       items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
-      migrateDecisionFacetsOnItems();
-    }else{ groups=[]; categories=[]; items=[];driveKnownVersion=''; }
+    }else{ groups=[]; categories=[]; items=[]; }
     items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
     ensureDefaultTaxonomy();
-    driveSyncConfirmed=true;driveSaveError='';saveLocal();refreshDriveSaveStatus();
+    saveLocal();
+    persistDeletedDriveIds(new Set());
+    setManualDrivePending(false);
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;
-  }catch(e){ console.error(e); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }
+  }catch(e){ console.error(e); persistDeletedDriveIds(previousPendingDeletes); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }
 }
 
 // Google Apps Script performs analysis independently. This static site only imports its Drive results.
@@ -1186,7 +1066,7 @@ function collectDriveIdsFromItem(it){
 async function deleteDriveFile(fileId){
   if(!fileId) return;
   try{ await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,{method:'DELETE'}); }
-  catch(e){ console.warn('Drive delete skipped/failed:', fileId, e); }
+  catch(e){ console.warn('Drive delete failed:', fileId, e); throw e; }
 }
 function removeItemsThatAreCarouselSlides(){
   const slideIds=new Set(); const slideNames=new Set();
@@ -1260,22 +1140,16 @@ async function deleteItem(id){
   const it=items.find(i=>i.id===id);
   if(!it) return;
   const ids=collectDriveIdsFromItem(it);
-  const msg=ids.length?`삭제할까요?\nDrive 파일 ${ids.length}개도 함께 삭제됩니다.`:'삭제할까요?';
+  const msg=ids.length?`삭제할까요?\nDrive 파일 ${ids.length}개는 다음 수동 'Drive 저장' 시 삭제됩니다.`:'삭제할까요?';
   if(!confirm(msg)) return;
   rememberDeletedDriveIds(ids);
   items=items.filter(i=>i.id!==id);
   if(selectedId===id) closeDetail();
-  saveLocal(); renderAll();
-  if(gdriveToken||restoreCachedDriveToken()){
-    await ensureDriveToken().catch(()=>null);
-    await Promise.all(ids.map(deleteDriveFile));
-    await uploadDataFile().catch(console.warn);
-  }
-  showToast('삭제 완료','success');
+  saveLocal(); setManualDrivePending(true); renderAll();
+  showToast('로컬 삭제 완료 · Drive에는 수동 저장 시 반영됩니다','success');
 }
 
-// 모아둔 레퍼런스 전체 삭제 (Drive 연결 시 원본 파일도 함께 정리, 미연결 시에는
-// 다음 'Drive 저장' 시점에 자동으로 반영됩니다 — saveToDrive의 양방향 삭제 동기화 참고)
+// 모아둔 레퍼런스 전체 삭제: 로컬에서만 즉시 삭제하며, Drive 정리는 수동 저장 시점에 실행됩니다.
 async function deleteAllItems(){
   if(!items.length){ showToast('삭제할 레퍼런스가 없어요','error'); return; }
   const count=items.length;
@@ -1289,22 +1163,9 @@ async function deleteAllItems(){
   selectedId=null;
   $('detail-panel')?.classList.remove('open');
   saveLocal();
+  setManualDrivePending(true);
   renderAll();
-
-  if(gdriveToken||restoreCachedDriveToken()){
-    try{
-      await ensureDriveToken();
-      await Promise.allSettled(allDriveIds.map(deleteDriveFile));
-      persistDeletedDriveIds(new Set());
-      await uploadDataFile().catch(console.warn);
-      showToast(`전체 삭제 완료 (Drive 파일 ${allDriveIds.length}개 포함)`,'success');
-    }catch(e){
-      console.warn(e);
-      showToast('로컬은 전체 삭제되었어요. Drive 정리는 다음 "Drive 저장" 때 자동으로 반영돼요.','success');
-    }
-  }else{
-    showToast('전체 삭제 완료 (다음 "Drive 저장" 시 Drive에도 반영돼요)','success');
-  }
+  showToast('로컬 전체 삭제 완료 · Drive에는 수동 저장 시 반영됩니다','success');
 }
 
 // ─── Media Binding (Lazy Loaded) ───
@@ -1409,7 +1270,7 @@ function filteredItems(){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
-  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl,Object.values(cleanFacets(x.facets||{})).flat().join(' ')].join(' ').toLowerCase().includes(q));
+  if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl,Object.values(x.facets||{}).flat().join(' ')].join(' ').toLowerCase().includes(q));
   for(const [key,values] of Object.entries(facetFilters)){if(values.length)arr=arr.filter(x=>values.some(v=>(x.facets?.[key]||[]).includes(v)));}
   if(classificationFilter==='classified')arr=arr.filter(isClassified);
   if(classificationFilter==='unclassified')arr=arr.filter(x=>!isClassified(x));
@@ -1510,8 +1371,7 @@ function cardNode(it,index=0){
   if(media) { card.appendChild(media); }
 
   const info=document.createElement('div'); info.className='card-info';
-  const tagKeys=['objective','offer','contentRole','channel','industry','color','visual'];
-  const tags=tagKeys.flatMap(k=>(cleanFacets(it.facets)[k]||[]).slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
+  const tags=Object.entries(cleanFacets(it.facets)).flatMap(([k,vals])=>vals.slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
   info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
   const editBtn=info.querySelector('.card-title-edit-btn');
@@ -1881,46 +1741,34 @@ function dzClick(e){ if(e.target.id!=='paste-btn' && e.target.id!=='paste-upload
 function onDzPaste(e){ handlePaste(e.clipboardData); }
 
 // ─── Paste Logic ───
-function pastedMediaFile(file,index){
-  const mime=file.type||'image/png';
-  const ext=(mime.split('/')[1]||'png').replace('jpeg','jpg');
-  const name=file.name&&file.name!=='image.png'?file.name:`paste_${Date.now()}_${index}.${ext}`;
-  return new File([file],name,{type:mime});
-}
-function createPastedCarousel(files){
-  const images=files.filter(f=>(f.type||'').startsWith('image/'));
-  if(images.length<2)return 0;
-  const title=`붙여넣은 캐러셀 · ${new Date().toLocaleString('ko-KR')}`;
-  const slides=images.map((f,i)=>{
-    const file=pastedMediaFile(f,i);const id=uid('s');const localBlobKey=`slide:${id}`;
-    saveLocalBlob(localBlobKey,file,{fileName:file.name,mimeType:file.type}).catch(console.warn);
-    const url=URL.createObjectURL(file);
-    return {id,src:url,previewSrc:url,mimeType:file.type,fileName:file.name,localBlobKey,_file:file};
-  });
-  const item=normalizeItem({id:uid(),title,type:'carousel',sourceType:'paste',carousel:slides,ts:Date.now()});
-  items.unshift(item);return images.length;
-}
 async function addPastedFiles(files){
-  const arr=[...files].filter(f=>/^image\//.test(f.type||'')||/^video\//.test(f.type||''));
-  if(!arr.length)return 0;
-  const images=arr.filter(f=>f.type.startsWith('image/'));
-  const videos=arr.filter(f=>f.type.startsWith('video/'));
-  if(images.length>=2)createPastedCarousel(images);
-  else if(images.length===1)items.unshift(fileToItem(pastedMediaFile(images[0],0),{sourceType:'paste'}));
-  videos.forEach((f,i)=>items.unshift(fileToItem(pastedMediaFile(f,i+images.length),{sourceType:'paste'})));
-  await saveData();renderAll();return arr.length;
+  const arr=[...files].filter(f=>/^image\//.test(f.type||'') || /^video\//.test(f.type||''));
+  if(!arr.length) return 0;
+  arr.forEach((f,i)=>{
+    const safeName=f.name&&f.name!=='image.png'?f.name:`paste_${Date.now()}_${i}.${((f.type||'image/png').split('/')[1]||'png').replace('jpeg','jpg')}`;
+    const file=f.name?f:new File([f],safeName,{type:f.type||'image/png'});
+    items.unshift(fileToItem(file,{title:safeName,sourceType:'paste'}));
+  });
+  saveData(); renderAll();
+  return arr.length;
 }
+
 function handlePaste(cd){
-  if(!cd)return;
-  const files=[...(cd.files||[])].filter(f=>/^image\//.test(f.type||'')||/^video\//.test(f.type||''));
-  if(files.length){addPastedFiles(files).then(n=>n&&showToast(n>1?`${n}장 묶음 붙여넣기 완료`:'1개 붙여넣기 완료','success'));return;}
-  const fromItems=[];const stringJobs=[];
-  for(const entry of cd.items||[]){
-    if(entry.kind==='file'){const f=entry.getAsFile();if(f)fromItems.push(f);}
-    else if(entry.kind==='string'&&entry.type==='text/plain')stringJobs.push(new Promise(resolve=>entry.getAsString(s=>resolve((s||'').trim()))));
+  if(!cd) return;
+  let added=0;
+  const files=[...(cd.files||[])].filter(f=>/^image\//.test(f.type||'') || /^video\//.test(f.type||''));
+  if(files.length){ addPastedFiles(files).then(n=>{ if(n) showToast(`${n}개 붙여넣기 완료`,'success'); }); return; }
+  
+  const stringJobs=[];
+  for(const item of cd.items||[]){
+    if(item.kind==='file'){
+      const f=item.getAsFile();
+      if(f && (/^image\//.test(f.type||'') || /^video\//.test(f.type||''))){ items.unshift(fileToItem(f,{sourceType:'paste'})); added++; }
+    }else if(item.kind==='string' && item.type==='text/plain'){
+      stringJobs.push(new Promise(resolve=>item.getAsString(s=>{ const url=(s||'').trim(); if(/^https?:\/\//.test(url)){ items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()})); added++; } resolve(); })));
+    }
   }
-  if(fromItems.length){addPastedFiles(fromItems).then(n=>n&&showToast(`${n}개 붙여넣기 완료`,'success'));return;}
-  Promise.all(stringJobs).then(urls=>{urls.filter(url=>/^https?:\/\//i.test(url)).forEach(url=>items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()})));if(urls.some(url=>/^https?:\/\//i.test(url))){saveData();renderAll();showToast('URL 붙여넣기 완료','success');}});
+  Promise.all(stringJobs).then(()=>{ if(added){ saveData(); renderAll(); showToast(`${added}개 붙여넣기 완료`,'success'); } });
 }
 
 async function tryClipboardPaste(e){ 
@@ -1933,19 +1781,26 @@ async function readClipboardNow(e){
   try{
     if(navigator.clipboard?.read){
       const entries=await navigator.clipboard.read();
-      const files=[];const urls=[];
+      let added=0;
       for(const entry of entries){
-        const imageType=entry.types.find(type=>type.startsWith('image/'));
-        if(imageType){const blob=await entry.getType(imageType);files.push(pastedMediaFile(blob,files.length));continue;}
-        if(entry.types.includes('text/plain')){const url=(await (await entry.getType('text/plain')).text()).trim();if(/^https?:\/\//.test(url))urls.push(url);}
+        for(const type of entry.types){
+          if(type.startsWith('image/')){
+            const blob=await entry.getType(type);
+            const ext=(type.split('/')[1]||'png').replace('jpeg','jpg');
+            const file=new File([blob],`paste_${Date.now()}_${added}.${ext}`,{type});
+            items.unshift(fileToItem(file,{sourceType:'paste'})); added++;
+          }else if(type==='text/plain'){
+            const text=await (await entry.getType(type)).text(); const url=text.trim();
+            if(/^https?:\/\//.test(url)){ items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()})); added++; }
+          }
+        }
       }
-      if(files.length){await addPastedFiles(files);showToast(files.length>1?`${files.length}장 캐러셀로 추가됨`:'이미지 추가 완료','success');return;}
-      if(urls.length){for(const url of urls)items.unshift(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),sourceType:'paste_url',ts:Date.now()}));await saveData();renderAll();showToast('URL 붙여넣기 완료','success');return;}
+      if(added){ saveData(); renderAll(); showToast(`${added}개 붙여넣기 완료`,'success'); return; }
     }
     const text=await navigator.clipboard.readText();
-    if(/^https?:\/\//.test(text.trim())){await addUrlItem(text.trim());showToast('URL 붙여넣기 완료','success');return;}
+    if(/^https?:\/\//.test(text.trim())){ addUrlItem(text.trim()); showToast('URL 붙여넣기 완료','success'); return; }
     showToast('클립보드에서 이미지나 URL을 찾지 못했어요','error');
-  }catch(err){console.error(err);showToast('브라우저 권한상 Ctrl+V를 눌러 붙여넣어주세요','error');}
+  }catch(err){ console.error(err); showToast('브라우저 권한상 Ctrl+V를 눌러 붙여넣어주세요','error'); }
 }
 
 async function addUrlItem(url){ items.push(normalizeItem({id:uid(),title:url.split('/').pop()||'URL 레퍼런스',src:url,type:guessType(url),ts:Date.now()})); await saveData(); renderAll(); }
@@ -2174,7 +2029,7 @@ function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
-  it.facets=readFacetFields('detail',it.facets||{});
+  it.facets=readFacetFields('detail');
   synchronizeTitleFacets(it);
   it.sourceUrl=$('detail-edit-link')?.value||'';
   if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;
