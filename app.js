@@ -27,10 +27,19 @@ const FACET_GROUPS={color:[['컬러 계열',['레드','오렌지','옐로','그�
 const FACET_DESCRIPTIONS={color:'이미지에서 눈에 띄는 주요 색상 복수 선택 · HEX는 별도 입력',visual:'분위기와 표현 매체는 서로 다릅니다. 해당하는 요소를 각각 선택하세요.'};
 function facetOptionHTML(key,v,checked,prefix){const swatch=key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:'';return `<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${checked?'checked':''}><span>${swatch}${esc(v)}</span></label>`;}
 function facetGroupContent(key,options,selected,prefix){if(!FACET_GROUPS[key])return `<div class="facet-chips">${options.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div>`;return FACET_GROUPS[key].map(([name,subset])=>`<div class="facet-choice-group"><div class="facet-choice-group-title">${name}</div><div class="facet-chips">${subset.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`).join('');}
+<<<<<<< HEAD
 function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,options])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,options,selected[key],prefix)}</section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
 function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex='';}return result;}
 function renderFacetFilters(){const root=$('facet-filters');if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&['purpose','benefit','color','visual'].includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',opts]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
 function updateFacetFilterCounts(){Object.keys(FACETS).forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
+=======
+function facetFieldsBlockHTML(keys,prefix,selected){return keys.map(key=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,FACETS[key],selected[key],prefix)}</section>`).join('');}
+function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);const legacyCount=LEGACY_FACET_KEYS.reduce((sum,key)=>sum+(selected[key]?.length||0),0);return `<section class="facet-section"><div class="facet-section-title">전략 탐색</div><div class="facet-section-description">실무 의사결정 기준으로 고르는 핵심 8개 필터입니다.</div>${facetFieldsBlockHTML(STRATEGY_FACET_KEYS,prefix,selected)}</section><section class="facet-section"><div class="facet-section-title">비주얼 탐색</div><div class="facet-section-description">색상과 스타일을 보조적으로 기록합니다.</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section><section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>${legacyCount?`<div class="facet-legacy-hint">기존 분류 ${legacyCount}개는 호환성을 위해 보존됩니다. 현재 편집 화면에서는 전략·비주얼 핵심 분류만 노출합니다.</div>`:''}`;}
+function readFacetFields(prefix,base={}){const result={...cleanFacets(base)};const editableFacetKeys=[...PRIMARY_FACET_KEYS];editableFacetKeys.forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||base?.hex||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex=base?.hex||'';}return result;}
+function renderFacetFilterCollection(rootId,keys){const root=$(rootId);if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=keys.map(key=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&PRIMARY_OPEN_KEYS.includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',FACETS[key]]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});}
+function renderFacetFilters(){renderFacetFilterCollection('strategy-facet-filters',STRATEGY_FACET_KEYS);renderFacetFilterCollection('visual-facet-filters',VISUAL_FACET_KEYS);updateFacetFilterCounts();}
+function updateFacetFilterCounts(){[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS].forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
+>>>>>>> parent of 0dc1a01 (수정)
 function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
 function expandAllFacetTrees(open){document.querySelectorAll('#facet-filters details').forEach(d=>d.open=open);}
 function clearNavigatorFilters(){
@@ -235,6 +244,7 @@ function repairAndPruneMediaItems(){
   return {linked,removed};
 }
 
+<<<<<<< HEAD
 // 브라우저에는 자동 저장하지만, Google Drive에는 사용자가 버튼을 누를 때만 저장합니다.
 function isManualDrivePending(){ return localStorage.getItem(MANUAL_DRIVE_DIRTY_KEY)==='1'; }
 function setManualDrivePending(pending){
@@ -246,6 +256,9 @@ function updateAutosave(mode){
   const el=$('autosave-indicator');
   if(el){ el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'브라우저에 저장 중':'브라우저 로컬 저장 완료 (Google Drive는 수동 저장)'; }
 }
+=======
+function updateAutosave(mode){ const el=$('autosave-indicator'); if(el){el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'저장 중':'저장됨';}}
+>>>>>>> parent of 0dc1a01 (수정)
 function loadLocal(){
   try{
     const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
@@ -268,9 +281,15 @@ function makePersistableState(){
   return {groups,categories,items:items.map(cleanItem)};
 }
 
+<<<<<<< HEAD
 function saveLocal(){
   localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState()));
   updateAutosave('saved');
+=======
+function saveLocal(){ 
+  localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState())); 
+  updateAutosave('saved'); 
+>>>>>>> parent of 0dc1a01 (수정)
 }
 
 async function saveData(){
@@ -279,6 +298,10 @@ async function saveData(){
   saveLocal();
   setManualDrivePending(true); // 변경사항은 로컬에 보관하고, Drive 저장은 실행하지 않음
   await localCachePromise;
+<<<<<<< HEAD
+=======
+  if(gdriveToken||restoreCachedDriveToken()) saveToDrive(true);
+>>>>>>> parent of 0dc1a01 (수정)
 }
 
 // ─── Google Drive Auth ───
@@ -546,10 +569,16 @@ async function saveToDrive(silent=false){
         delete slide._file;
       }finally{ delete slide._uploading; }
     }));
+<<<<<<< HEAD
     await uploadDataFile();
     saveLocal();
     setManualDrivePending(false);
     if(!silent) showToast('Google Drive 수동 저장 완료','success'); 
+=======
+    await uploadDataFile(); 
+    saveLocal(); 
+    if(!silent) showToast('Drive 저장 완료','success'); 
+>>>>>>> parent of 0dc1a01 (수정)
     
     const df = $('detail-fields');
     if(df && selectedId) {
@@ -561,7 +590,11 @@ async function saveToDrive(silent=false){
           }
        }
     }
+<<<<<<< HEAD
   }catch(e){ console.error(e); setManualDrivePending(true); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
+=======
+  }catch(e){ console.error(e); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
+>>>>>>> parent of 0dc1a01 (수정)
 }
 
 async function syncItemsWithDriveAssets(){
@@ -642,8 +675,11 @@ async function syncItemsWithDriveAssets(){
 }
 
 async function loadFromDrive(){
+<<<<<<< HEAD
   if(isManualDrivePending() && !confirm('Drive에 저장되지 않은 로컬 변경사항이 있습니다.\nDrive 데이터를 불러오면 로컬 변경사항이 사라질 수 있습니다. 계속할까요?')) return false;
   const previousPendingDeletes=getDeletedDriveIds();
+=======
+>>>>>>> parent of 0dc1a01 (수정)
   try{
     // 명시적으로 불러오기를 선택한 경우 로컬 삭제 예약은 임시 해제합니다.
     // 불러오기 실패 시 기존 삭제 예약을 복원합니다.
@@ -657,14 +693,21 @@ async function loadFromDrive(){
       groups=Array.isArray(data.groups)?data.groups:[];
       categories=Array.isArray(data.categories)?data.categories:[];
       items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
+<<<<<<< HEAD
+=======
+      migrateDecisionFacetsOnItems();
+>>>>>>> parent of 0dc1a01 (수정)
     }else{ groups=[]; categories=[]; items=[]; }
     items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
     ensureDefaultTaxonomy();
     saveLocal();
+<<<<<<< HEAD
     persistDeletedDriveIds(new Set());
     setManualDrivePending(false);
+=======
+>>>>>>> parent of 0dc1a01 (수정)
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;
