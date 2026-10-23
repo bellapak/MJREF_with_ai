@@ -1459,13 +1459,13 @@ function closeMobileSidebar(){ $('sidebar')?.classList.remove('mobile-open'); $(
 function dropZoneNode(){ 
   const div=document.createElement('div'); div.id='drop-zone'; div.tabIndex=0; 
   div.ondragover=onDragOver; div.ondragleave=onDragLeave; div.ondrop=onDrop; div.onclick=dzClick; div.onpaste=onDzPaste; 
-  div.innerHTML='<div class="dz-icon">＋</div>이미지 · 영상을 드래그하거나<br><span style="color:var(--accent)">클릭해서 파일 선택</span><br><span style="font-size:11px;color:var(--t4)">Ctrl+V 로 이미지 또는 URL 붙여넣기 가능</span><br><button id="paste-btn" onclick="tryClipboardPaste(event)" style="margin-top:8px;background:rgba(10,132,255,0.15);border:1px solid rgba(10,132,255,0.35);color:var(--accent);font-family:var(--fn);font-size:11px;font-weight:500;padding:5px 14px;border-radius:8px;cursor:pointer;transition:all .15s;" onmouseover="this.style.background=\'rgba(10,132,255,0.25)\'" onmouseout="this.style.background=\'rgba(10,132,255,0.15)\'">클립보드에서 붙여넣기</button>'; 
+  div.innerHTML='<div class="dz-icon">＋</div>이미지 · 영상을 드래그하거나<br><span style="color:var(--accent)">클릭해서 파일 선택</span><br><span style="font-size:11px;color:var(--t3)">이미지 여러 장 → 캐러셀 1개로 등록</span><br><span style="font-size:11px;color:var(--t4)">Ctrl+V 로 이미지 또는 URL 붙여넣기 가능</span><br><button id="paste-btn" onclick="tryClipboardPaste(event)" style="margin-top:8px;background:rgba(10,132,255,0.15);border:1px solid rgba(10,132,255,0.35);color:var(--accent);font-family:var(--fn);font-size:11px;font-weight:500;padding:5px 14px;border-radius:8px;cursor:pointer;transition:all .15s;" onmouseover="this.style.background=\'rgba(10,132,255,0.25)\'" onmouseout="this.style.background=\'rgba(10,132,255,0.15)\'">클립보드에서 붙여넣기</button>'; 
   return div; 
 }
 
 function pasteBarNode(){
   const div=document.createElement('div'); div.id='paste-bar'; div.className='paste-bar';
-  div.innerHTML=`<div><strong>붙여넣기 / 빠른 추가</strong><span>Ctrl+V로 이미지·URL 추가, 드래그 앤 드롭 또는 클릭 업로드</span></div><div class="paste-actions"><button type="button" id="paste-read-btn">클립보드 읽기</button><button type="button" id="paste-upload-btn">파일 선택</button></div>`;
+  div.innerHTML=`<div><strong>붙여넣기 / 빠른 추가</strong><span>이미지 2장 이상 함께 추가 → 캐러셀 1개 · 파일 선택 / 드래그 앤 드롭</span></div><div class="paste-actions"><button type="button" id="paste-read-btn">클립보드 읽기</button><button type="button" id="paste-upload-btn">파일 선택</button></div>`;
   div.ondragover=onDragOver; div.ondragleave=onDragLeave; div.ondrop=onDrop;
   div.onclick=(e)=>{ if(e.target.id==='paste-upload-btn') $('file-input')?.click(); };
   setTimeout(()=>{
@@ -1898,10 +1898,63 @@ async function saveFromModal(){
 
 function guessType(url){ const u=url.toLowerCase(); if(/\.(mp4|webm|mov|m4v)(\?|$)/.test(u))return'video'; if(/^https?:/.test(u)&&!/\.(png|jpe?g|gif|webp|svg)(\?|$)/.test(u))return'link'; return'image'; }
 function addFromUrl(){ saveFromModal(); }
-function handleFileInput(e){ [...(e.target.files||[])].forEach(f=>items.push(fileToItem(f,{catIds:[...modalSelectedCats]}))); saveData(); renderAll(); e.target.value=''; }
-function onDragOver(e){ e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+// 빠른 추가에서는 이미지 여러 장을 자동으로 하나의 캐러셀로 묶습니다.
+// 파일명 자연 정렬(1,2,10)로 슬라이드 순서를 일관되게 유지합니다.
+// 개별 파일의 _file / localBlobKey는 기존 업로드 및 로컬 복원 로직과 동일하게 보존합니다.
+function quickCarouselFromFiles(imageFiles, sourceType='quick_add'){
+  const sorted=[...imageFiles].sort((a,b)=>(a.name||'').localeCompare(b.name||'', 'ko', {numeric:true,sensitivity:'base'}));
+  const slides=sorted.map((file,index)=>{
+    const id=uid('s');
+    const localBlobKey=`slide:${id}`;
+    const previewSrc=URL.createObjectURL(file);
+    const fileName=file.name||`image_${index+1}.png`;
+    return {id,src:previewSrc,previewSrc,driveFileId:'',mimeType:file.type||'image/png',fileName,localBlobKey,_file:file};
+  });
+  const firstName=sorted[0].name||'이미지';
+  const baseName=firstName.replace(/\.[^.]+$/,'').replace(/(?:[\s_-]+(?:\d{1,3}|slide[\s_-]*\d+))$/i,'').trim()||firstName.replace(/\.[^.]+$/,'');
+  return normalizeItem({
+    id:uid('car'),title:`${baseName} 외 ${sorted.length-1}장`,type:'carousel',
+    carousel:slides,sourceType,ts:Date.now()
+  });
+}
+
+async function addQuickFiles(inputFiles, sourceType='quick_add'){
+  const all=[...(inputFiles||[])];
+  const images=all.filter(f=>(f.type||'').startsWith('image/'));
+  const videos=all.filter(f=>(f.type||'').startsWith('video/'));
+  const ignored=all.length-images.length-videos.length;
+  if(!images.length&&!videos.length){showToast('이미지 또는 영상 파일만 추가할 수 있습니다.','error');return {carousel:0,single:0,ignored};}
+
+  let carousel=0;
+  if(images.length>=2){
+    items.push(quickCarouselFromFiles(images,sourceType));
+    carousel=1;
+  }else if(images.length===1){
+    items.push(fileToItem(images[0],{sourceType}));
+  }
+  // 캐러셀은 이미지로만 구성합니다. 함께 드롭된 동영상은 개별 카드로 저장합니다.
+  videos.forEach(file=>items.push(fileToItem(file,{sourceType})));
+  await saveData();
+  renderAll();
+  const single=(images.length===1?1:0)+videos.length;
+  const summary=[carousel?`이미지 ${images.length}장 → 캐러셀 1개`:'',single?`단일 파일 ${single}개`:'',ignored?`지원하지 않는 파일 ${ignored}개 제외`:''].filter(Boolean).join(' · ');
+  showToast(`${summary} 추가 완료 · Drive 저장은 수동입니다.`, 'success');
+  return {carousel,single,ignored};
+}
+
+async function handleFileInput(e){
+  const files=[...(e.target.files||[])];
+  e.target.value=''; // 같은 파일도 다시 선택 가능
+  if(files.length)await addQuickFiles(files,'quick_upload');
+}
+function onDragOver(e){ e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect='copy'; e.currentTarget.classList.add('dragover'); }
 function onDragLeave(){ $('drop-zone')?.classList.remove('dragover'); $('paste-bar')?.classList.remove('dragover'); }
-function onDrop(e){ e.preventDefault(); $('drop-zone')?.classList.remove('dragover'); $('paste-bar')?.classList.remove('dragover'); [...(e.dataTransfer.files||[])].forEach(f=>items.push(fileToItem(f))); saveData(); renderAll(); }
+async function onDrop(e){
+  e.preventDefault();
+  $('drop-zone')?.classList.remove('dragover'); $('paste-bar')?.classList.remove('dragover');
+  const files=[...(e.dataTransfer?.files||[])];
+  if(files.length)await addQuickFiles(files,'quick_drop');
+}
 function dzClick(e){ if(e.target.id!=='paste-btn' && e.target.id!=='paste-upload-btn') $('file-input')?.click(); }
 function onDzPaste(e){ handlePaste(e.clipboardData); }
 
