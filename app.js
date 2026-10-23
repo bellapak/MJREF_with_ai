@@ -3,45 +3,122 @@
 // =====================================================
 
 
-// 레퍼런스 백과: 서로 독립적인 검색 축. 한 축 안 OR, 서로 다른 축 AND.
+// MJREF 전략/비주얼 필터 개편 (구형 분류 값, 미인식 값, Apps Script 결과 무손실 보존)
+// 한 축 내 OR, 다른 축 간 AND. 핵심 필터 8 + 비주얼 필터 2.
+const STRATEGY_FACET_KEYS=['objective','strategy','journey','offer','contentRole','tone','channel','industry'];
+const VISUAL_FACET_KEYS=['color','visual'];
+const PRIMARY_FACET_KEYS=[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS];
+const LEGACY_FACET_KEYS=['purpose','benefit','layout','composition','subject','appeal','cta','season','motion'];
+const PRIMARY_OPEN_KEYS=['objective','strategy','offer','color'];
 const FACETS={
- purpose:['광고','SNS 콘텐츠','상세페이지','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','UI/UX','굿즈','기타'],
- industry:['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타'],
- benefit:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
- color:['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크','브라운','베이지','화이트','그레이','블랙','멀티컬러'],
- visual:['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실','일러스트','3D/CG','타이포그래피','포토그래픽'],
- layout:['중앙 정렬','좌우 분할','그리드','비대칭','콜라주','풀블리드','카드형','큰 타이포','여백 중심','정보 밀집'],
- composition:['정면','탑뷰/플랫레이','클로즈업','매크로','아이레벨','로우앵글','인물 중심','제품 단독','사용 장면'],
- subject:['제품','인물','캐릭터','타이포그래피','공간/인테리어','자연','소품','음식','패키지','UI 화면'],
- appeal:['문제 해결','기능/성능','가격/가치','사회적 증거','열망/라이프스타일','희소성/긴급성','호기심/반전','유머/밈','감성/스토리'],
- tone:['위트/유머','도발적','친근함','담백함','전문적','감성적','직설적','고급스러움','실험적'],
- cta:['구매 유도','탐색/더보기','가입/구독','참여/응모','저장/공유','방문/예약','CTA 없음'],
- season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
- motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
+  objective:['브랜드 인지도 확대','브랜드 이미지 구축','제품·서비스 소개','고객 관심·참여 유도','사이트·매장 유입','구매·전환 유도','재구매·고객 유지','팬덤·관계 형성'],
+  strategy:['열망형','기술형','사회적 증거형','가격 인식형','문제 해결형','희소성·긴급성','호기심·반전','유머·밈','스토리텔링','세계관·캐릭터','참여·UGC'],
+  journey:['인지','관심·탐색','비교·고려','구매·전환','사용·경험','재구매·추천'],
+  offer:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
+  contentRole:['시선 끌기/후킹','브랜드 소개','제품 소개','교육·정보 제공','사용법·튜토리얼','비교·리뷰','후기·사회적 증거','참여·커뮤니티','프로모션 안내','전환·CTA','고객 관계 유지'],
+  tone:['위트/유머','도발적','친근함','담백함','전문적','감성적','직설적','고급스러움','실험적'],
+  channel:['인스타그램 피드','인스타그램 릴스','인스타그램 스토리','틱톡','유튜브','핀터레스트','자사몰·랜딩','배너·광고','이메일·CRM','오프라인·인쇄','패키지','기타'],
+  industry:['생활용품','뷰티/퍼스널케어','패션','식품/음료','리빙/인테리어','테크','문화/공연','기타'],
+  color:['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크','브라운','베이지','화이트','그레이','블랙','멀티컬러'],
+  visual:['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실','일러스트','3D/CG','타이포그래피','포토그래픽'],
+  // Legacy classification keys: persisted and searchable, hidden from primary filter UI.
+  purpose:['광고','SNS 콘텐츠','상세페이지','랜딩페이지','패키지','브랜딩/BX','오프라인/VMD','UI/UX','굿즈','기타'],
+  benefit:['가격 할인','정액 할인','쿠폰','무료배송','증정품/GWP','1+1/번들','적립/포인트','멤버십','한정/선착순','체험/샘플','성능/효능','편의성','기타/없음'],
+  layout:['중앙 정렬','좌우 분할','그리드','비대칭','콜라주','풀블리드','카드형','큰 타이포','여백 중심','정보 밀집'],
+  composition:['정면','탑뷰/플랫레이','클로즈업','매크로','아이레벨','로우앵글','인물 중심','제품 단독','사용 장면'],
+  subject:['제품','인물','캐릭터','타이포그래피','공간/인테리어','자연','소품','음식','패키지','UI 화면'],
+  appeal:['문제 해결','기능/성능','가격/가치','사회적 증거','열망/라이프스타일','희소성/긴급성','호기심/반전','유머/밈','감성/스토리'],
+  cta:['구매 유도','탐색/더보기','가입/구독','참여/응모','저장/공유','방문/예약','CTA 없음'],
+  season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
+  motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
 };
-const FACET_NAMES={purpose:'용도',industry:'업종',benefit:'혜택·프로모션',color:'색상군',visual:'비주얼 스타일',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'카피 소구',tone:'카피 톤',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
+const FACET_NAMES={objective:'활용 목적',strategy:'마케팅 전략',journey:'고객 여정',offer:'프로모션·혜택',contentRole:'콘텐츠 역할',tone:'표현 톤',channel:'적용 채널·매체',industry:'업종',color:'색상군',visual:'비주얼 스타일',purpose:'기존 용도',benefit:'기존 혜택',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'기존 카피 소구',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
 let facetFilters={};let classificationFilter='all';
-function cleanFacets(value){const result={};Object.keys(FACETS).forEach(k=>{result[k]=Array.isArray(value?.[k])?value[k].filter(v=>FACETS[k].includes(v)):[];});return result;}
+// Never strip future AI values or unknown classification keys from saved records.
+function cleanFacets(value){
+  const result={};
+  if(value&&typeof value==='object'&&!Array.isArray(value)){
+    for(const [key,raw] of Object.entries(value)){
+      if(key==='hex')continue;
+      if(Array.isArray(raw))result[key]=[...new Set(raw.filter(v=>typeof v==='string'&&v.trim()).map(v=>v.trim()))];
+    }
+  }
+  for(const key of Object.keys(FACETS))if(!Array.isArray(result[key]))result[key]=[];
+  return result;
+}
 const COLOR_SWATCHES={'레드':'#EA4045','오렌지':'#F28B35','옐로':'#F2C84B','그린':'#4DAD69','민트':'#58C8B9','블루':'#3A85E8','퍼플':'#8755CB','핑크':'#ED80B3','브라운':'#986C4A','베이지':'#CBB99C','화이트':'#F5F5F5','그레이':'#95999F','블랙':'#202124','멀티컬러':'linear-gradient(120deg,#ef5050,#f3d453,#58bd8c,#487de9,#a25cdb)'};
 const FACET_GROUPS={color:[['컬러 계열',['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크']],['뉴트럴',['브라운','베이지','화이트','그레이','블랙']],['복합',['멀티컬러']]],visual:[['표현 분위기',['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실']],['비주얼 제작 방식',['일러스트','3D/CG','타이포그래피','포토그래픽']]]};
-const FACET_DESCRIPTIONS={color:'이미지에서 눈에 띄는 주요 색상 복수 선택 · HEX는 별도 입력',visual:'분위기와 표현 매체는 서로 다릅니다. 해당하는 요소를 각각 선택하세요.'};
+const FACET_DESCRIPTIONS={
+ objective:'레퍼런스의 마케팅 활용 목표',strategy:'어떤 논리로 고객을 설득하는가',journey:'고객 행동의 어느 단계에 해당하는가',offer:'고객에게 제시되는 혜택',contentRole:'콘텐츠가 수행하는 구체적 역할',tone:'콘텐츠의 말투와 표현 성격',channel:'어떤 채널과 매체에 응용할 수 있는가',industry:'산업군별 레퍼런스',
+ color:'시각적으로 눈에 띄는 주요 색상 · HEX는 별도 입력',visual:'표현 분위기와 제작 매체를 각각 선택할 수 있습니다.'
+};
+// Compatibility bridge: infer only directly-supported legacy tags. Original tags always remain intact.
+const LEGACY_APPEAL_STRATEGIES={'문제 해결':'문제 해결형','기능/성능':'기술형','가격/가치':'가격 인식형','사회적 증거':'사회적 증거형','열망/라이프스타일':'열망형','희소성/긴급성':'희소성·긴급성','호기심/반전':'호기심·반전','유머/밈':'유머·밈','감성/스토리':'스토리텔링'};
+function migrateDecisionFacets(facets){
+  const f=cleanFacets(facets);
+  if(!f.strategy.length){ f.strategy=[...new Set((f.appeal||[]).map(v=>LEGACY_APPEAL_STRATEGIES[v]).filter(Boolean))]; }
+  if(!f.offer.length && f.benefit.length){ f.offer=[...f.benefit]; }
+  if(!f.objective.length && f.purpose.includes('브랜딩/BX')){ f.objective=['브랜드 이미지 구축']; }
+  return f;
+}
+function migrateDecisionFacetsOnItems(){
+  let changed=0;
+  items.forEach(it=>{
+    const before=JSON.stringify(it.facets||{});
+    const migrated=migrateDecisionFacets(it.facets);
+    it.facets={...migrated,hex:it.facets?.hex||''};
+    if(JSON.stringify(it.facets)!==before)changed++;
+  });
+  return changed;
+}
+function facetVisibleOptions(key,selected=[]){
+  const options=FACETS[key]||[];
+  // Values emitted by a different Apps Script taxonomy stay editable, not invisible.
+  return [...options,...(selected||[]).filter(v=>!options.includes(v))];
+}
 function facetOptionHTML(key,v,checked,prefix){const swatch=key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:'';return `<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${checked?'checked':''}><span>${swatch}${esc(v)}</span></label>`;}
-function facetGroupContent(key,options,selected,prefix){if(!FACET_GROUPS[key])return `<div class="facet-chips">${options.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div>`;return FACET_GROUPS[key].map(([name,subset])=>`<div class="facet-choice-group"><div class="facet-choice-group-title">${name}</div><div class="facet-chips">${subset.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`).join('');}
-<<<<<<< HEAD
-function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);return Object.entries(FACETS).map(([key,options])=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,options,selected[key],prefix)}</section>`).join('')+`<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`;}
-function readFacetFields(prefix){const result={};Object.keys(FACETS).forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex='';}return result;}
-function renderFacetFilters(){const root=$('facet-filters');if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=Object.entries(FACETS).map(([key,opts])=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&['purpose','benefit','color','visual'].includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',opts]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});updateFacetFilterCounts();}
-function updateFacetFilterCounts(){Object.keys(FACETS).forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
-=======
-function facetFieldsBlockHTML(keys,prefix,selected){return keys.map(key=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,FACETS[key],selected[key],prefix)}</section>`).join('');}
-function facetFieldsHTML(prefix,values={}){const selected=cleanFacets(values);const legacyCount=LEGACY_FACET_KEYS.reduce((sum,key)=>sum+(selected[key]?.length||0),0);return `<section class="facet-section"><div class="facet-section-title">전략 탐색</div><div class="facet-section-description">실무 의사결정 기준으로 고르는 핵심 8개 필터입니다.</div>${facetFieldsBlockHTML(STRATEGY_FACET_KEYS,prefix,selected)}</section><section class="facet-section"><div class="facet-section-title">비주얼 탐색</div><div class="facet-section-description">색상과 스타일을 보조적으로 기록합니다.</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section><section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>${legacyCount?`<div class="facet-legacy-hint">기존 분류 ${legacyCount}개는 호환성을 위해 보존됩니다. 현재 편집 화면에서는 전략·비주얼 핵심 분류만 노출합니다.</div>`:''}`;}
-function readFacetFields(prefix,base={}){const result={...cleanFacets(base)};const editableFacetKeys=[...PRIMARY_FACET_KEYS];editableFacetKeys.forEach(k=>result[k]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${k}"]:checked`)].map(x=>x.value));result.hex=($(prefix+'-hex')?.value||base?.hex||'').trim().toUpperCase();if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex=base?.hex||'';}return result;}
-function renderFacetFilterCollection(rootId,keys){const root=$(rootId);if(!root)return;const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));root.innerHTML=keys.map(key=>`<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&PRIMARY_OPEN_KEYS.includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${(FACET_GROUPS[key]||[['',FACETS[key]]]).map(([groupName,values])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${values.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`).join('');root.dataset.initialized='1';root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});}
-function renderFacetFilters(){renderFacetFilterCollection('strategy-facet-filters',STRATEGY_FACET_KEYS);renderFacetFilterCollection('visual-facet-filters',VISUAL_FACET_KEYS);updateFacetFilterCounts();}
-function updateFacetFilterCounts(){[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS].forEach(k=>{const node=$('facet-count-'+k);if(node)node.textContent=facetFilters[k]?.length?`${facetFilters[k].length}개 선택`:'';});}
->>>>>>> parent of 0dc1a01 (수정)
+function facetGroupContent(key,options,selected,prefix){
+  if(!FACET_GROUPS[key])return `<div class="facet-chips">${options.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div>`;
+  const groups=FACET_GROUPS[key];
+  const grouped=new Set(groups.flatMap(([,opts])=>opts));
+  const unknown=options.filter(v=>!grouped.has(v));
+  return groups.map(([name,subset])=>`<div class="facet-choice-group"><div class="facet-choice-group-title">${name}</div><div class="facet-chips">${subset.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`).join('')+(unknown.length?`<div class="facet-choice-group"><div class="facet-choice-group-title">추가 태그</div><div class="facet-chips">${unknown.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`:'');
+}
+function facetFieldsBlockHTML(keys,prefix,selected){return keys.map(key=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,facetVisibleOptions(key,selected[key]),selected[key],prefix)}</section>`).join('');}
+function facetFieldsHTML(prefix,values={}){
+  const selected=cleanFacets(values);
+  const legacyCount=LEGACY_FACET_KEYS.reduce((sum,key)=>sum+(selected[key]?.length||0),0);
+  return `<section class="facet-section"><div class="facet-section-title">전략 탐색</div><div class="facet-section-description">목적과 전략, 여정을 기준으로 분류하는 핵심 8개 필터</div>${facetFieldsBlockHTML(STRATEGY_FACET_KEYS,prefix,selected)}</section><section class="facet-section"><div class="facet-section-title">비주얼 탐색</div><div class="facet-section-description">색상과 표현 스타일을 분리해서 기록</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section><section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>${legacyCount?`<div class="facet-legacy-hint">기존 분류 ${legacyCount}개도 함께 보존됩니다. 신규 필터와 중복되는 일부 태그만 보조 변환합니다.</div>`:''}`;
+}
+function readFacetFields(prefix,base={}){
+  const result={...cleanFacets(base)};
+  for(const key of PRIMARY_FACET_KEYS){ result[key]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${key}"]:checked`)].map(x=>x.value); }
+  result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();
+  if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex=base?.hex||'';}
+  return result;
+}
+function renderFacetFilterCollection(rootId,keys){
+  const root=$(rootId);if(!root)return;
+  const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));
+  root.innerHTML=keys.map(key=>{
+    const values=[...new Set([...FACETS[key],...items.flatMap(it=>it.facets?.[key]||[]).filter(v=>typeof v==='string')])];
+    const groups=FACET_GROUPS[key]||[['',values]];
+    const grouped=new Set(groups.flatMap(([,arr])=>arr));
+    const extras=values.filter(v=>!grouped.has(v));
+    const allGroups=[...groups,...(extras.length?[['추가 태그',extras]]:[])];
+    return `<details class="facet-filter" data-key="${key}" ${(openKeys.has(key)||(!root.dataset.initialized&&PRIMARY_OPEN_KEYS.includes(key)))?'open':''}><summary>${FACET_NAMES[key]} <small id="facet-count-${key}"></small></summary>${FACET_DESCRIPTIONS[key]?`<div class="facet-filter-desc">${FACET_DESCRIPTIONS[key]}</div>`:''}${allGroups.map(([groupName,opts])=>`<div class="facet-filter-group">${groupName?`<div class="facet-filter-group-title">${groupName}</div>`:''}<div class="facet-filter-options">${opts.map(v=>`<label>${key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:''}<input type="checkbox" data-filter-facet="${key}" value="${esc(v)}" ${facetFilters[key]?.includes(v)?'checked':''}>${esc(v)}</label>`).join('')}</div></div>`).join('')}</details>`;
+  }).join('');
+  root.dataset.initialized='1';
+  root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});
+}
+function renderFacetFilters(){
+  renderFacetFilterCollection('strategy-facet-filters',STRATEGY_FACET_KEYS);
+  renderFacetFilterCollection('visual-facet-filters',VISUAL_FACET_KEYS);
+  updateFacetFilterCounts();
+}
+function updateFacetFilterCounts(){for(const key of PRIMARY_FACET_KEYS){const node=$('facet-count-'+key);if(node)node.textContent=facetFilters[key]?.length?`${facetFilters[key].length}개 선택`:'';}}
 function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
-function expandAllFacetTrees(open){document.querySelectorAll('#facet-filters details').forEach(d=>d.open=open);}
+function expandAllFacetTrees(open){document.querySelectorAll('#strategy-facet-filters details,#visual-facet-filters details').forEach(d=>d.open=open);}
 function clearNavigatorFilters(){
   facetFilters={};classificationFilter='all';currentFilter='all';currentCatFilter=null;
   const field=$('search-input');if(field)field.value='';
@@ -51,7 +128,7 @@ function clearNavigatorFilters(){
 }
 function removeFacetChip(key,value){
   facetFilters[key]=(facetFilters[key]||[]).filter(v=>v!==value);
-  const input=[...document.querySelectorAll('#facet-filters input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
+  const input=[...document.querySelectorAll('#strategy-facet-filters input,#visual-facet-filters input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
   if(input)input.checked=false;
   updateFacetFilterCounts();renderBoard();
 }
@@ -59,21 +136,20 @@ function renderNavigatorChips(){
   const target=$('active-filter-chips');if(!target)return;
   target.replaceChildren();
   const add=(label,callback)=>{const b=document.createElement('button');b.type='button';b.className='active-filter-chip';b.textContent=label+' ×';b.addEventListener('click',callback);target.appendChild(b);};
-  Object.entries(facetFilters).forEach(([k,vs])=>(vs||[]).forEach(v=>add(`${FACET_NAMES[k]} · ${v}`,()=>removeFacetChip(k,v))));
+  Object.entries(facetFilters).forEach(([k,vs])=>(vs||[]).forEach(v=>add(`${FACET_NAMES[k]||k} · ${v}`,()=>removeFacetChip(k,v))));
   if(currentFilter!=='all')add('유형 · '+({image:'이미지',video:'영상',carousel:'캐러셀',link:'링크'}[currentFilter]||currentFilter),()=>{currentFilter='all';document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));renderBoard();});
   if(classificationFilter!=='all')add(classificationFilter==='classified'?'분류 완료':'미분류',()=>{classificationFilter='all';$('classification-filter').value='all';renderBoard();});
   const q=$('search-input')?.value.trim();if(q)add('검색 · '+q,()=>{$('search-input').value='';renderBoard();});
   const label=$('search-results-label');if(label)label.textContent=target.children.length?`${target.children.length}개 검색 조건 적용 중`:'전체 레퍼런스 탐색';
 }
-// 동일한 제목을 가진 별도 레퍼런스는 수동 분류 태그를 공유합니다.
-// 미확인/기본 제목은 공유하지 않고 기타 메모, 출처, 미디어는 절대 덮어쓰지 않습니다.
+// 동일한 제목을 가진 별도 레퍼런스는 분류 태그만 공유합니다.
 function normalizedReferenceTitle(title){const v=String(title||'').normalize('NFKC').replace(/\s+/g,' ').trim().toLocaleLowerCase();return (!v||['제목없음','untitled','image','붙여넣기 이미지'].includes(v))?'':v;}
 function sameTitleReferences(title,excludeId){const key=normalizedReferenceTitle(title);return key?items.filter(it=>it.id!==excludeId&&normalizedReferenceTitle(it.title)===key):[];}
-function isEmptyClassification(facets){return !Object.keys(FACETS).some(k=>Array.isArray(facets?.[k])&&facets[k].length>0)&&!facets?.hex;}
+function isEmptyClassification(facets){return !Object.entries(facets||{}).some(([k,v])=>k!=='hex'&&Array.isArray(v)&&v.length>0)&&!facets?.hex;}
 function matchingClassification(title,excludeId){return sameTitleReferences(title,excludeId).find(it=>!isEmptyClassification(it.facets))?.facets||null;}
 function synchronizeTitleFacets(source){const duplicates=sameTitleReferences(source.title,source.id);for(const item of duplicates)item.facets={...cleanFacets(source.facets),hex:source.facets?.hex||''};return duplicates.length;}
 function inheritTitleFacets(item){const existing=matchingClassification(item.title,item.id);if(existing&&isEmptyClassification(item.facets))item.facets={...cleanFacets(existing),hex:existing.hex||''};}
-function isClassified(it){return Object.values(cleanFacets(it.facets)).some(arr=>arr.length>0);}
+function isClassified(it){return Object.entries(it.facets||{}).some(([key,v])=>key!=='hex'&&Array.isArray(v)&&v.length>0);}
 function legacyMemo(it){return [it.notes,it.visualNotes&&`[기존 비주얼 메모]\n${it.visualNotes}`,it.contentNotes&&`[기존 콘텐츠 메모]\n${it.contentNotes}`,it.caption&&`[기존 본문]\n${it.caption}`,it.imageCopy&&`[기존 이미지 카피]\n${it.imageCopy}`,it.hook&&`[기존 훅]\n${it.hook}`,it.cta&&`[기존 CTA]\n${it.cta}`].filter(Boolean).join('\n\n');}
 
 const CAT_COLORS=['#ff6b35','#ff3b8b','#7b5cfa','#3b9eff','#3bfa8a','#ffd23b','#ff5555','#00d4d4','#ffaa3b','#c8f060'];
@@ -161,7 +237,7 @@ function normalizeItem(raw={}){
     fileName: raw.fileName || raw.filename || raw.name || fileNameFromUrl(src) || '',
     localBlobKey: raw.localBlobKey || '',
     catIds: Array.isArray(raw.catIds)?raw.catIds:[],
-    facets: {...cleanFacets(raw.facets), hex: raw.facets?.hex || ''},
+    facets: {...migrateDecisionFacets(raw.facets), hex: raw.facets?.hex || ''},
     memoMigrated: true,
     platform: raw.platform || '', brand: raw.brand || '', sourceType: raw.sourceType || raw.source_type || '', sourceUrl,
     caption: '', hook: '', cta: '',
@@ -244,7 +320,6 @@ function repairAndPruneMediaItems(){
   return {linked,removed};
 }
 
-<<<<<<< HEAD
 // 브라우저에는 자동 저장하지만, Google Drive에는 사용자가 버튼을 누를 때만 저장합니다.
 function isManualDrivePending(){ return localStorage.getItem(MANUAL_DRIVE_DIRTY_KEY)==='1'; }
 function setManualDrivePending(pending){
@@ -256,9 +331,6 @@ function updateAutosave(mode){
   const el=$('autosave-indicator');
   if(el){ el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'브라우저에 저장 중':'브라우저 로컬 저장 완료 (Google Drive는 수동 저장)'; }
 }
-=======
-function updateAutosave(mode){ const el=$('autosave-indicator'); if(el){el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'저장 중':'저장됨';}}
->>>>>>> parent of 0dc1a01 (수정)
 function loadLocal(){
   try{
     const raw=JSON.parse(localStorage.getItem(LS_KEY)||'{}');
@@ -281,15 +353,9 @@ function makePersistableState(){
   return {groups,categories,items:items.map(cleanItem)};
 }
 
-<<<<<<< HEAD
 function saveLocal(){
   localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState()));
   updateAutosave('saved');
-=======
-function saveLocal(){ 
-  localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState())); 
-  updateAutosave('saved'); 
->>>>>>> parent of 0dc1a01 (수정)
 }
 
 async function saveData(){
@@ -298,10 +364,6 @@ async function saveData(){
   saveLocal();
   setManualDrivePending(true); // 변경사항은 로컬에 보관하고, Drive 저장은 실행하지 않음
   await localCachePromise;
-<<<<<<< HEAD
-=======
-  if(gdriveToken||restoreCachedDriveToken()) saveToDrive(true);
->>>>>>> parent of 0dc1a01 (수정)
 }
 
 // ─── Google Drive Auth ───
@@ -569,16 +631,10 @@ async function saveToDrive(silent=false){
         delete slide._file;
       }finally{ delete slide._uploading; }
     }));
-<<<<<<< HEAD
     await uploadDataFile();
     saveLocal();
     setManualDrivePending(false);
     if(!silent) showToast('Google Drive 수동 저장 완료','success'); 
-=======
-    await uploadDataFile(); 
-    saveLocal(); 
-    if(!silent) showToast('Drive 저장 완료','success'); 
->>>>>>> parent of 0dc1a01 (수정)
     
     const df = $('detail-fields');
     if(df && selectedId) {
@@ -590,11 +646,7 @@ async function saveToDrive(silent=false){
           }
        }
     }
-<<<<<<< HEAD
   }catch(e){ console.error(e); setManualDrivePending(true); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
-=======
-  }catch(e){ console.error(e); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
->>>>>>> parent of 0dc1a01 (수정)
 }
 
 async function syncItemsWithDriveAssets(){
@@ -675,11 +727,8 @@ async function syncItemsWithDriveAssets(){
 }
 
 async function loadFromDrive(){
-<<<<<<< HEAD
   if(isManualDrivePending() && !confirm('Drive에 저장되지 않은 로컬 변경사항이 있습니다.\nDrive 데이터를 불러오면 로컬 변경사항이 사라질 수 있습니다. 계속할까요?')) return false;
   const previousPendingDeletes=getDeletedDriveIds();
-=======
->>>>>>> parent of 0dc1a01 (수정)
   try{
     // 명시적으로 불러오기를 선택한 경우 로컬 삭제 예약은 임시 해제합니다.
     // 불러오기 실패 시 기존 삭제 예약을 복원합니다.
@@ -693,21 +742,14 @@ async function loadFromDrive(){
       groups=Array.isArray(data.groups)?data.groups:[];
       categories=Array.isArray(data.categories)?data.categories:[];
       items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
-<<<<<<< HEAD
-=======
-      migrateDecisionFacetsOnItems();
->>>>>>> parent of 0dc1a01 (수정)
     }else{ groups=[]; categories=[]; items=[]; }
     items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
     ensureDefaultTaxonomy();
     saveLocal();
-<<<<<<< HEAD
     persistDeletedDriveIds(new Set());
     setManualDrivePending(false);
-=======
->>>>>>> parent of 0dc1a01 (수정)
     renderAll();
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;
@@ -1304,6 +1346,7 @@ function bindDriveMediaRemote(el,it,placeholder=''){
 
 // ─── UI & Rendering ───
 function renderAll(){
+  renderFacetFilters();
   renderBoard();
   updateDriveUi();
   updateAiClassificationStats();
@@ -1414,7 +1457,7 @@ function cardNode(it,index=0){
   if(media) { card.appendChild(media); }
 
   const info=document.createElement('div'); info.className='card-info';
-  const tags=Object.entries(cleanFacets(it.facets)).flatMap(([k,vals])=>vals.slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
+  const tags=PRIMARY_FACET_KEYS.flatMap(k=>(it.facets?.[k]||[]).slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
   info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
   const editBtn=info.querySelector('.card-title-edit-btn');
@@ -2072,7 +2115,7 @@ function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
-  it.facets=readFacetFields('detail');
+  it.facets=readFacetFields('detail',it.facets);
   synchronizeTitleFacets(it);
   it.sourceUrl=$('detail-edit-link')?.value||'';
   if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;

@@ -1233,10 +1233,33 @@ body{font-size:13px;}
 
 .ai-sync-settings{background:transparent;border:1px solid var(--glass-border);color:var(--t2);font-weight:500!important}
 .ai-sync-settings:hover{color:var(--t1);border-color:var(--accent)}
-<<<<<<< HEAD
-=======
 
-
-/* Strategy / Visual split navigator */
-.facet-filter-tree{display:flex;flex-direction:column;gap:5px;margin-top:8px}.navigator-group-heading-secondary{padding-top:12px}.facet-section{display:grid;gap:10px;margin-bottom:8px}.facet-section-title{font-size:12px;font-weight:700;color:var(--t1)}.facet-section-description{font-size:10px;line-height:1.6;color:var(--t2);margin-top:-3px}.facet-legacy-hint{font-size:10px;line-height:1.6;color:var(--t3);padding:4px 0 6px}.card-cat-tag{max-width:100%;overflow:hidden;text-overflow:ellipsis}.detail-section-title + .facet-editor{margin-top:6px;}
->>>>>>> parent of 0dc1a01 (수정)
+/* MJREF strategy/visual taxonomy — isolated from old #facet-filters styles */
+#strategy-facet-filters,#visual-facet-filters{display:flex;flex-direction:column;gap:5px;margin:8px 0 0}
+#strategy-facet-filters .facet-filter,#visual-facet-filters .facet-filter{width:100%;}
+.facet-tree-header{display:flex;align-items:baseline;gap:7px;padding:14px 9px 6px;margin-top:8px;border-top:1px solid var(--b2)}
+.facet-tree-header span{font-size:9px;font-weight:800;letter-spacing:.13em;color:var(--accent)}
+.facet-tree-header strong{font-size:12px;font-weight:760;color:var(--t1)}
+.facet-tree-header small{font-size:10px;color:var(--t3);margin-left:auto}
+.visual-tree-header{margin-top:16px}
+.facet-filter-tree .facet-filter{border:1px solid var(--b2);border-radius:10px;overflow:hidden;background:transparent}
+.facet-filter-tree .facet-filter[open]{background:var(--s2);border-color:var(--b3)}
+.facet-filter-tree .facet-filter summary{cursor:pointer;list-style:none;padding:12px 11px 12px 25px;font-size:12px;font-weight:650;display:flex;align-items:center;justify-content:space-between;gap:6px;position:relative}
+.facet-filter-tree .facet-filter summary::-webkit-details-marker{display:none}
+.facet-filter-tree .facet-filter summary::before{content:'›';position:absolute;left:10px;top:8px;font-size:17px;color:var(--t2);transition:transform .18s}
+.facet-filter-tree .facet-filter[open] summary::before{transform:rotate(90deg)}
+.facet-filter-tree .facet-filter small{color:var(--accent);font-size:10px}
+.facet-filter-tree .facet-filter-desc{font-size:10px;color:var(--t2);line-height:1.55;padding:0 10px 6px;margin:0}
+.facet-filter-tree .facet-filter-group{padding:0 9px 5px}
+.facet-filter-tree .facet-filter-group-title{font-size:10px;color:var(--t2);font-weight:700;margin:6px 0}
+.facet-filter-tree .facet-filter-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:4px 2px 11px}
+.facet-filter-tree .facet-filter-options label{font-size:11px;color:var(--t2s);display:flex;align-items:flex-start;gap:5px;line-height:1.45;word-break:keep-all;cursor:pointer}
+.facet-filter-tree .facet-filter-options input{accent-color:var(--accent);flex-shrink:0;margin-top:2px}
+.facet-section{display:flex;flex-direction:column;gap:11px;border-bottom:1px solid var(--b2);padding:6px 0 16px;margin-bottom:14px}
+.facet-section-title{font-size:13px;font-weight:800;letter-spacing:-.25px;color:var(--t1)}
+.facet-section-description{font-size:11px;color:var(--t2);line-height:1.6;margin-top:-5px}
+.facet-legacy-hint{font-size:10px;color:var(--t3);line-height:1.6;padding:8px 0 2px}
+.facet-field{padding-bottom:11px;border-bottom:1px solid var(--b1)}
+.facet-section .facet-field:last-child{border-bottom:none;padding-bottom:2px}
+.facet-choice input:checked+span{border-color:var(--accent);background:rgba(0,100,255,.10);color:var(--accent)}
+.facet-choice input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
