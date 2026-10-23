@@ -3,14 +3,45 @@
 // =====================================================
 
 
-// MJREF 전략/비주얼 필터 개편 (구형 분류 값, 미인식 값, Apps Script 결과 무손실 보존)
-// 한 축 내 OR, 다른 축 간 AND. 핵심 필터 8 + 비주얼 필터 2.
-const STRATEGY_FACET_KEYS=['objective','strategy','journey','offer','contentRole','tone','channel','industry'];
+// MJREF 콘텐츠 영역 > 공통 분석 > 영역별 분석 > 비주얼 분석 (2026-10-23)
+// 영역 태그는 한 레퍼런스에 여러 개 부여 가능. 영역 간 OR, 독립 필터 축 간 AND.
+const CONTENT_AREAS=[
+  {id:'ad',name:'광고·캠페인',short:'광고',code:'AD',desc:'광고 소재와 캠페인 설득 구조',keys:['strategy','journey','offer','cta']},
+  {id:'brand',name:'브랜드·BX',short:'브랜드',code:'BX',desc:'브랜드 세계관과 자산',keys:['brandAsset','strategy','audienceRelation']},
+  {id:'creator',name:'인플루언서',short:'인플루언서',code:'CR',desc:'크리에이터·협업·반응 분석',keys:['creatorType','partnership','creatorFormat','trustSignal','audienceResponse','audienceRelation']},
+  {id:'social',name:'SNS·커뮤니티',short:'SNS',code:'SO',desc:'일상 게시물·팬덤·참여',keys:['socialMechanic','audienceResponse','narrative']},
+  {id:'editorial',name:'정보·에디토리얼',short:'에디토리얼',code:'ED',desc:'아티클·교육·콘텐츠 큐레이션',keys:['editorialType','narrative']},
+  {id:'commerce',name:'커머스·제품',short:'커머스',code:'CM',desc:'제품 소개·판매·리뷰',keys:['journey','offer','strategy']},
+  {id:'space',name:'공간·경험',short:'공간',code:'SP',desc:'팝업·전시·오프라인 경험',keys:['experienceType','narrative']},
+  {id:'culture',name:'문화·공연',short:'문화·공연',code:'CU',desc:'공연 콘텐츠·팬덤·굿즈',keys:['cultureFocus','audienceRelation','narrative']}
+];
+const AREA_VALUES=CONTENT_AREAS.map(x=>x.name);
+const COMMON_FACET_KEYS=['objective','contentRole','contentFormat','tone','channel','industry'];
+const STRATEGY_FACET_KEYS=['strategy','journey','offer']; // 기존 의미를 보존하는 호환 키
 const VISUAL_FACET_KEYS=['color','visual'];
-const PRIMARY_FACET_KEYS=[...STRATEGY_FACET_KEYS,...VISUAL_FACET_KEYS];
-const LEGACY_FACET_KEYS=['purpose','benefit','layout','composition','subject','appeal','cta','season','motion'];
-const PRIMARY_OPEN_KEYS=['objective','strategy','offer','color'];
+const SPECIALTY_FACET_KEYS=[...new Set(CONTENT_AREAS.flatMap(x=>x.keys))];
+const PRIMARY_FACET_KEYS=['contentArea',...new Set([...COMMON_FACET_KEYS,...SPECIALTY_FACET_KEYS,...VISUAL_FACET_KEYS])];
+const LEGACY_FACET_KEYS=['purpose','benefit','layout','composition','subject','appeal','season','motion'];
+const PRIMARY_OPEN_KEYS=['objective','contentRole','creatorType','partnership','color'];
+const activeAreaFilters=new Set();
+const editorFacetDrafts={};
+function specialtyKeysForAreas(areas){return [...new Set(CONTENT_AREAS.filter(a=>areas.includes(a.name)).flatMap(a=>a.keys))];}
+
 const FACETS={
+  contentArea:AREA_VALUES,
+  contentFormat:['이미지·포스터','캐러셀·슬라이드','숏폼 영상','롱폼 영상','라이브·스트리밍','텍스트·아티클','오디오·팟캐스트','웹·인터랙션','오프라인·공간','기타'],
+  narrative:['강한 첫 장면','질문·문제 제시','문제→해결','전후 비교','과정·기록','경험·브이로그','반전·스토리','정보·리스트','시각 중심','기타'],
+  creatorType:['일상·라이프스타일','뷰티·패션','리빙·홈케어','정보·전문가','리뷰·추천','엔터테인먼트·밈','아티스트·공연','캐릭터·버추얼','커뮤니티·취향','기타'],
+  partnership:['자발적 언급','제품 제공·시딩','유료 협찬·광고','앰배서더','공동 제작','브랜드 콜라보','어필리에이트·추천 코드','브랜드 자체 크리에이터','협업 여부 미확인'],
+  creatorFormat:['루틴·브이로그','언박싱·하울','실사용 리뷰','비교·추천','사용법·튜토리얼','챌린지·트렌드','정보·팁','스토리텔링','라이브·Q&A','현장·행사 기록','기타'],
+  trustSignal:['실사용 과정 노출','구체적인 장단점 언급','장기 사용 맥락','전문성·근거 제시','광고·협찬 표시 확인','솔직한 경험담','댓글 질문 응답','검증 가능한 근거','확인 어려움'],
+  audienceResponse:['공감·경험 공유','질문·문의','친구 태그·추천','저장·공유 언급','구매 의향 표현','비판·의심 반응','팬덤 대화','반응 정보 없음'],
+  audienceRelation:['팬덤 형성','친근한 일상 교류','전문성 기반 신뢰','고객 교육','참여 유도','브랜드 커뮤니티','단방향 공지','기타'],
+  socialMechanic:['일상 공유','질문·투표','댓글 참여','밈·트렌드 활용','챌린지·UGC','커뮤니티 대화','저장·공유 유도','시리즈 연재','기타'],
+  brandAsset:['브랜드 메시지','브랜드 스토리','캐릭터·세계관','로고·비주얼 아이덴티티','브랜드 캠페인','브랜드 경험','커뮤니티·팬덤','브랜드 보이스','기타'],
+  editorialType:['인터뷰','케이스 스터디','뉴스·이슈','정보 요약','교육·튜토리얼','비교·분석','스토리·에세이','큐레이션·추천','리포트·데이터','기타'],
+  experienceType:['팝업·전시','오프라인 이벤트','매장·VMD','공간·건축','패키지·언박싱','체험·인터랙션','UI·디지털 경험','굿즈·피지컬','기타'],
+  cultureFocus:['공연 포스터','티저·트레일러','캐스트·배우 콘텐츠','공연 리뷰','관객 참여·팬덤','굿즈·MD','프로그램북·인쇄물','현장·공간','문화 프로젝트','기타'],
   objective:['브랜드 인지도 확대','브랜드 이미지 구축','제품·서비스 소개','고객 관심·참여 유도','사이트·매장 유입','구매·전환 유도','재구매·고객 유지','팬덤·관계 형성'],
   strategy:['열망형','기술형','사회적 증거형','가격 인식형','문제 해결형','희소성·긴급성','호기심·반전','유머·밈','스토리텔링','세계관·캐릭터','참여·UGC'],
   journey:['인지','관심·탐색','비교·고려','구매·전환','사용·경험','재구매·추천'],
@@ -32,7 +63,7 @@ const FACETS={
   season:['신제품 출시','시즌 세일','봄','여름','가을','겨울','설날','추석','발렌타인','크리스마스','블랙프라이데이','상시 운영'],
   motion:['영상 해당 없음','실사','모션그래픽','스톱모션','제품 데모','브이로그','인터뷰','애니메이션','텍스트 애니메이션','숏폼 트렌드']
 };
-const FACET_NAMES={objective:'활용 목적',strategy:'마케팅 전략',journey:'고객 여정',offer:'프로모션·혜택',contentRole:'콘텐츠 역할',tone:'표현 톤',channel:'적용 채널·매체',industry:'업종',color:'색상군',visual:'비주얼 스타일',purpose:'기존 용도',benefit:'기존 혜택',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'기존 카피 소구',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
+const FACET_NAMES={contentArea:'분석 분야',contentFormat:'콘텐츠 형식',narrative:'이야기 전개',creatorType:'크리에이터 유형',partnership:'브랜드 협업 관계',creatorFormat:'크리에이터 콘텐츠 형식',trustSignal:'신뢰·진정성 단서',audienceResponse:'관찰된 오디언스 반응',audienceRelation:'오디언스 관계',socialMechanic:'참여·확산 방식',brandAsset:'브랜드 자산·표현',editorialType:'에디토리얼 유형',experienceType:'공간·경험 유형',cultureFocus:'문화·공연 소재',objective:'활용 목적',strategy:'마케팅 전략',journey:'고객 여정',offer:'프로모션·혜택',contentRole:'콘텐츠 역할',tone:'표현 톤',channel:'적용 채널·매체',industry:'업종',color:'색상군',visual:'비주얼 스타일',purpose:'기존 용도',benefit:'기존 혜택',layout:'레이아웃',composition:'촬영·구도',subject:'주요 피사체',appeal:'기존 카피 소구',cta:'CTA 유형',season:'시즌·이벤트',motion:'영상 스타일'};
 let facetFilters={};let classificationFilter='all';
 // Never strip future AI values or unknown classification keys from saved records.
 function cleanFacets(value){
@@ -49,13 +80,17 @@ function cleanFacets(value){
 const COLOR_SWATCHES={'레드':'#EA4045','오렌지':'#F28B35','옐로':'#F2C84B','그린':'#4DAD69','민트':'#58C8B9','블루':'#3A85E8','퍼플':'#8755CB','핑크':'#ED80B3','브라운':'#986C4A','베이지':'#CBB99C','화이트':'#F5F5F5','그레이':'#95999F','블랙':'#202124','멀티컬러':'linear-gradient(120deg,#ef5050,#f3d453,#58bd8c,#487de9,#a25cdb)'};
 const FACET_GROUPS={color:[['컬러 계열',['레드','오렌지','옐로','그린','민트','블루','퍼플','핑크']],['뉴트럴',['브라운','베이지','화이트','그레이','블랙']],['복합',['멀티컬러']]],visual:[['표현 분위기',['미니멀','맥시멀','레트로/빈티지','키치/위트','럭셔리','에디토리얼','실험적/초현실']],['비주얼 제작 방식',['일러스트','3D/CG','타이포그래피','포토그래픽']]]};
 const FACET_DESCRIPTIONS={
+ contentArea:'한 콘텐츠가 여러 분야에 속할 수 있습니다. 분석 분야를 선택하면 전용 태그가 나타납니다.',
+ contentFormat:'실제로 보이는 발행·표현 형식',narrative:'콘텐츠 서사의 전개 구조',creatorType:'주로 다루는 관심사와 전문영역',partnership:'실제 확인 가능한 협업 방식만 선택',creatorFormat:'크리에이터가 사용한 콘텐츠 기법',trustSignal:'확인되는 근거만 체크하며 진정성을 단정하지 않습니다',audienceResponse:'댓글 등 실제 관찰한 반응만 기록합니다. 지표를 추정하지 않습니다',audienceRelation:'콘텐츠가 형성하는 관계',socialMechanic:'참여를 이끌어내는 구체적인 장치',brandAsset:'브랜드의 고유한 시각·언어 자산',editorialType:'콘텐츠가 정보를 전달하는 방식',experienceType:'공간에서 발생하는 경험 종류',cultureFocus:'공연·문화 분야의 주제',
  objective:'레퍼런스의 마케팅 활용 목표',strategy:'어떤 논리로 고객을 설득하는가',journey:'고객 행동의 어느 단계에 해당하는가',offer:'고객에게 제시되는 혜택',contentRole:'콘텐츠가 수행하는 구체적 역할',tone:'콘텐츠의 말투와 표현 성격',channel:'어떤 채널과 매체에 응용할 수 있는가',industry:'산업군별 레퍼런스',
  color:'시각적으로 눈에 띄는 주요 색상 · HEX는 별도 입력',visual:'표현 분위기와 제작 매체를 각각 선택할 수 있습니다.'
 };
 // Compatibility bridge: infer only directly-supported legacy tags. Original tags always remain intact.
+const LEGACY_PURPOSE_AREA={'광고':'광고·캠페인','SNS 콘텐츠':'SNS·커뮤니티','상세페이지':'커머스·제품','랜딩페이지':'커머스·제품','패키지':'커머스·제품','브랜딩/BX':'브랜드·BX','오프라인/VMD':'공간·경험','UI/UX':'공간·경험','굿즈':'커머스·제품'};
 const LEGACY_APPEAL_STRATEGIES={'문제 해결':'문제 해결형','기능/성능':'기술형','가격/가치':'가격 인식형','사회적 증거':'사회적 증거형','열망/라이프스타일':'열망형','희소성/긴급성':'희소성·긴급성','호기심/반전':'호기심·반전','유머/밈':'유머·밈','감성/스토리':'스토리텔링'};
 function migrateDecisionFacets(facets){
   const f=cleanFacets(facets);
+  if(!f.contentArea.length && f.purpose.length){f.contentArea=[...new Set(f.purpose.map(v=>LEGACY_PURPOSE_AREA[v]).filter(Boolean))];}
   if(!f.strategy.length){ f.strategy=[...new Set((f.appeal||[]).map(v=>LEGACY_APPEAL_STRATEGIES[v]).filter(Boolean))]; }
   if(!f.offer.length && f.benefit.length){ f.offer=[...f.benefit]; }
   if(!f.objective.length && f.purpose.includes('브랜딩/BX')){ f.objective=['브랜드 이미지 구축']; }
@@ -76,7 +111,7 @@ function facetVisibleOptions(key,selected=[]){
   // Values emitted by a different Apps Script taxonomy stay editable, not invisible.
   return [...options,...(selected||[]).filter(v=>!options.includes(v))];
 }
-function facetOptionHTML(key,v,checked,prefix){const swatch=key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:'';return `<label class="facet-choice"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${checked?'checked':''}><span>${swatch}${esc(v)}</span></label>`;}
+function facetOptionHTML(key,v,checked,prefix){const swatch=key==='color'?`<i class="ref-swatch" style="background:${COLOR_SWATCHES[v]||'#888'}"></i>`:'';const onchange=key==='contentArea'?` onchange="updateDomainEditor('${prefix}')"`:'';return `<label class="facet-choice${key==='contentArea'?' area-choice':''}"><input type="checkbox" data-facet="${key}" data-prefix="${prefix}" value="${esc(v)}" ${checked?'checked':''}${onchange}><span>${swatch}${esc(v)}</span></label>`;}
 function facetGroupContent(key,options,selected,prefix){
   if(!FACET_GROUPS[key])return `<div class="facet-chips">${options.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div>`;
   const groups=FACET_GROUPS[key];
@@ -85,14 +120,35 @@ function facetGroupContent(key,options,selected,prefix){
   return groups.map(([name,subset])=>`<div class="facet-choice-group"><div class="facet-choice-group-title">${name}</div><div class="facet-chips">${subset.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`).join('')+(unknown.length?`<div class="facet-choice-group"><div class="facet-choice-group-title">추가 태그</div><div class="facet-chips">${unknown.map(v=>facetOptionHTML(key,v,selected.includes(v),prefix)).join('')}</div></div>`:'');
 }
 function facetFieldsBlockHTML(keys,prefix,selected){return keys.map(key=>`<section class="facet-field"><div class="facet-heading">${FACET_NAMES[key]}</div>${FACET_DESCRIPTIONS[key]?`<div class="facet-description">${FACET_DESCRIPTIONS[key]}</div>`:''}${facetGroupContent(key,facetVisibleOptions(key,selected[key]),selected[key],prefix)}</section>`).join('');}
+function renderSpecialtyEditorSections(prefix,facets){
+  const keys=specialtyKeysForAreas(facets.contentArea||[]);
+  if(!keys.length) return '<div class="facet-domain-hint">위에서 분석 분야를 고르면 광고·크리에이터·브랜드·문화 등 해당 분야의 전용 분석 태그가 나타납니다.</div>';
+  return `<section class="facet-section specialized-facets"><div class="facet-section-title">분야별 심화 분석</div><div class="facet-section-description">선택한 분석 분야에 필요한 질문만 표시합니다. 해당 분야만으로 성과가 자동 추정되지는 않습니다.</div>${facetFieldsBlockHTML(keys,prefix,facets)}</section>`;
+}
 function facetFieldsHTML(prefix,values={}){
-  const selected=cleanFacets(values);
+  const selected=cleanFacets(values);selected.hex=values?.hex||'';
+  editorFacetDrafts[prefix]={...selected};
   const legacyCount=LEGACY_FACET_KEYS.reduce((sum,key)=>sum+(selected[key]?.length||0),0);
-  return `<section class="facet-section"><div class="facet-section-title">전략 탐색</div><div class="facet-section-description">목적과 전략, 여정을 기준으로 분류하는 핵심 8개 필터</div>${facetFieldsBlockHTML(STRATEGY_FACET_KEYS,prefix,selected)}</section><section class="facet-section"><div class="facet-section-title">비주얼 탐색</div><div class="facet-section-description">색상과 표현 스타일을 분리해서 기록</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section><section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>${legacyCount?`<div class="facet-legacy-hint">기존 분류 ${legacyCount}개도 함께 보존됩니다. 신규 필터와 중복되는 일부 태그만 보조 변환합니다.</div>`:''}`;
+  return `<section class="facet-section domain-editor-section"><div class="facet-section-title">01. 콘텐츠 분석 분야 <small>복수 선택</small></div><div class="facet-section-description">광고, 브랜드, 인플루언서, SNS, 공연 등 최상위 분야를 먼저 분류합니다.</div><div class="editor-domain-grid">${facetGroupContent('contentArea',facetVisibleOptions('contentArea',selected.contentArea),selected.contentArea,prefix)}</div></section>`+
+  `<section class="facet-section"><div class="facet-section-title">02. 공통 분석</div><div class="facet-section-description">모든 분야에서 공통으로 비교할 수 있는 기준</div>${facetFieldsBlockHTML(COMMON_FACET_KEYS,prefix,selected)}</section>`+
+  `<div id="${prefix}-specialized-fields">${renderSpecialtyEditorSections(prefix,selected)}</div>`+
+  `<section class="facet-section"><div class="facet-section-title">비주얼 분석</div>${facetFieldsBlockHTML(VISUAL_FACET_KEYS,prefix,selected)}</section>`+
+  `<section class="facet-field"><div class="facet-heading">대표 색상 HEX</div><input class="detail-input" id="${prefix}-hex" placeholder="#3B82F6" value="${esc(values?.hex||'')}"></section>`+
+  (legacyCount?`<div class="facet-legacy-hint">이전 분류 ${legacyCount}개를 호환 보존합니다. 보이지 않는 태그는 수정해도 삭제되지 않습니다.</div>`:'');
+}
+function readEditorSelections(prefix){
+  const result={...cleanFacets(editorFacetDrafts[prefix]||{})};
+  const keys=new Set([...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet]`)].map(el=>el.dataset.facet));
+  for(const key of keys){result[key]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${key}"]:checked`)].map(x=>x.value);}
+  return result;
+}
+function updateDomainEditor(prefix){
+  const selected=readEditorSelections(prefix);
+  editorFacetDrafts[prefix]=selected;
+  const target=$(prefix+'-specialized-fields');if(target)target.innerHTML=renderSpecialtyEditorSections(prefix,selected);
 }
 function readFacetFields(prefix,base={}){
-  const result={...cleanFacets(base)};
-  for(const key of PRIMARY_FACET_KEYS){ result[key]=[...document.querySelectorAll(`[data-prefix="${prefix}"][data-facet="${key}"]:checked`)].map(x=>x.value); }
+  const result={...cleanFacets(base),...readEditorSelections(prefix)};
   result.hex=($(prefix+'-hex')?.value||'').trim().toUpperCase();
   if(result.hex&&!/^#[0-9A-F]{6}$/.test(result.hex)){showToast('대표 색상은 #RRGGBB 형식으로 입력하세요.','error');result.hex=base?.hex||'';}
   return result;
@@ -111,16 +167,39 @@ function renderFacetFilterCollection(rootId,keys){
   root.dataset.initialized='1';
   root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});
 }
+function renderAreaSelector(){
+  const root=$('area-selector');if(!root)return;
+  const allActive=activeAreaFilters.size===0;
+  root.innerHTML=`<button type="button" class="area-nav-all${allActive?' is-active':''}" aria-pressed="${allActive}" onclick="clearAreaFilters()"><span>전체 분야</span><small>${items.length}</small></button>`+
+    CONTENT_AREAS.map(a=>{const active=activeAreaFilters.has(a.name);const count=items.filter(it=>(it.facets?.contentArea||[]).includes(a.name)).length;
+      return `<button type="button" class="area-nav-item${active?' is-active':''}" aria-pressed="${active}" onclick="toggleAreaFilter('${a.name}')" title="${esc(a.desc)}"><span class="area-nav-code">${a.code}</span><span class="area-nav-name">${esc(a.short)}</span><small>${count}</small></button>`;
+    }).join('');
+  const desc=$('area-selector-description');
+  if(desc)desc.textContent=allActive?'공통 태그로 전체 탐색 · 분야를 선택하면 심화 필터 표시':`${[...activeAreaFilters].join(' + ')} 분석 중 · 선택한 분야끼리는 OR 검색`;
+}
+function clearAreaFilters(){activeAreaFilters.clear();renderAreaSelector();renderFacetFilters();renderBoard();}
+function toggleAreaFilter(value){
+  if(activeAreaFilters.has(value))activeAreaFilters.delete(value);else activeAreaFilters.add(value);
+  renderAreaSelector();renderFacetFilters();renderBoard();
+}
+function visibleSpecialtyKeys(){
+  if(activeAreaFilters.size===0)return [...new Set(SPECIALTY_FACET_KEYS.filter(key=>(facetFilters[key]||[]).length))];
+  return [...new Set([...specialtyKeysForAreas([...activeAreaFilters]),...SPECIALTY_FACET_KEYS.filter(key=>(facetFilters[key]||[]).length)])];
+}
 function renderFacetFilters(){
-  renderFacetFilterCollection('strategy-facet-filters',STRATEGY_FACET_KEYS);
+  renderAreaSelector();
+  renderFacetFilterCollection('common-facet-filters',COMMON_FACET_KEYS);
+  const specialized=visibleSpecialtyKeys();
+  const specialSection=$('specialty-filter-section');if(specialSection)specialSection.hidden=!specialized.length;
+  renderFacetFilterCollection('specialty-facet-filters',specialized);
   renderFacetFilterCollection('visual-facet-filters',VISUAL_FACET_KEYS);
   updateFacetFilterCounts();
 }
 function updateFacetFilterCounts(){for(const key of PRIMARY_FACET_KEYS){const node=$('facet-count-'+key);if(node)node.textContent=facetFilters[key]?.length?`${facetFilters[key].length}개 선택`:'';}}
-function resetFacetFilters(){facetFilters={};classificationFilter='all';if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
-function expandAllFacetTrees(open){document.querySelectorAll('#strategy-facet-filters details,#visual-facet-filters details').forEach(d=>d.open=open);}
+function resetFacetFilters(){facetFilters={};classificationFilter='all';activeAreaFilters.clear();if($('classification-filter'))$('classification-filter').value='all';renderFacetFilters();renderBoard();}
+function expandAllFacetTrees(open){document.querySelectorAll('.facet-filter-tree details').forEach(d=>d.open=open);}
 function clearNavigatorFilters(){
-  facetFilters={};classificationFilter='all';currentFilter='all';currentCatFilter=null;
+  facetFilters={};classificationFilter='all';currentFilter='all';currentCatFilter=null;activeAreaFilters.clear();
   const field=$('search-input');if(field)field.value='';
   if($('classification-filter'))$('classification-filter').value='all';
   document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));
@@ -128,14 +207,13 @@ function clearNavigatorFilters(){
 }
 function removeFacetChip(key,value){
   facetFilters[key]=(facetFilters[key]||[]).filter(v=>v!==value);
-  const input=[...document.querySelectorAll('#strategy-facet-filters input,#visual-facet-filters input')].find(el=>el.dataset.filterFacet===key&&el.value===value);
-  if(input)input.checked=false;
-  updateFacetFilterCounts();renderBoard();
+  renderFacetFilters();renderBoard();
 }
 function renderNavigatorChips(){
   const target=$('active-filter-chips');if(!target)return;
   target.replaceChildren();
   const add=(label,callback)=>{const b=document.createElement('button');b.type='button';b.className='active-filter-chip';b.textContent=label+' ×';b.addEventListener('click',callback);target.appendChild(b);};
+  [...activeAreaFilters].forEach(v=>add('분야 · '+v,()=>toggleAreaFilter(v)));
   Object.entries(facetFilters).forEach(([k,vs])=>(vs||[]).forEach(v=>add(`${FACET_NAMES[k]||k} · ${v}`,()=>removeFacetChip(k,v))));
   if(currentFilter!=='all')add('유형 · '+({image:'이미지',video:'영상',carousel:'캐러셀',link:'링크'}[currentFilter]||currentFilter),()=>{currentFilter='all';document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));renderBoard();});
   if(classificationFilter!=='all')add(classificationFilter==='classified'?'분류 완료':'미분류',()=>{classificationFilter='all';$('classification-filter').value='all';renderBoard();});
@@ -1354,6 +1432,7 @@ function renderAll(){
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
 function filteredItems(){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
+  if(activeAreaFilters.size)arr=arr.filter(it=>(it.facets?.contentArea||[]).some(v=>activeAreaFilters.has(v)));
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
   if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl,Object.values(x.facets||{}).flat().join(' ')].join(' ').toLowerCase().includes(q));

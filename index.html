@@ -51,7 +51,13 @@
   <!-- SIDEBAR -->
   <div id="sidebar">
     <div class="navigator-head"><span class="navigator-kicker">EXPLORE LIBRARY</span><strong>필터 탐색기</strong><span>조건을 조합해 원하는 레퍼런스를 찾으세요.</span></div>
-    <div class="sb-section">콘텐츠 유형</div>
+    <section class="area-nav" aria-label="콘텐츠 분석 분야">
+      <div class="area-nav-heading"><span>LEVEL 01 · CONTENT MAP</span><strong>콘텐츠 분석 분야</strong><p>광고뿐 아니라 인플루언서, SNS, 공연 등 여러 영역을 함께 탐색합니다.</p></div>
+      <div id="area-selector" class="area-selector"></div>
+      <p id="area-selector-description" class="area-selector-description">공통 태그로 전체 탐색</p>
+    </section>
+    <hr class="sb-divider">
+    <div class="sb-section">콘텐츠 파일 유형</div>
     <button class="sb-btn active" data-filter="all" onclick="setFilter('all',this)">
       <span class="dot" style="background:var(--t3)"></span>전체<span class="cnt" id="cnt-all">0</span>
     </button>
@@ -96,12 +102,16 @@
       </div>
     </div>
     <hr class="sb-divider">
-    <div class="navigator-group-heading"><span>분류 탐색</span><button type="button" onclick="expandAllFacetTrees(true)">모두 펼치기</button><button type="button" onclick="expandAllFacetTrees(false)">접기</button></div>
+    <div class="navigator-group-heading"><span>LEVEL 02 · 상세 분석 태그</span><button type="button" onclick="expandAllFacetTrees(true)">모두 펼치기</button><button type="button" onclick="expandAllFacetTrees(false)">접기</button></div>
     <select id="classification-filter" class="facet-status" onchange="classificationFilter=this.value;renderBoard()"><option value="all">분류 전체</option><option value="classified">분류 완료</option><option value="unclassified">미분류</option></select>
-    <div class="facet-tip">한 항목 안은 OR · 다른 필터 항목끼리는 AND 검색</div>
-    <div class="facet-tree-header"><span>STRATEGY</span><strong>전략 탐색</strong><small>8개 분류</small></div>
-    <div id="strategy-facet-filters" class="facet-filter-tree"></div>
-    <div class="facet-tree-header visual-tree-header"><span>VISUAL</span><strong>비주얼 탐색</strong><small>2개 분류</small></div>
+    <div class="facet-tip">동일 항목 안 OR · 서로 다른 기준은 AND · 영역은 복수 선택 가능</div>
+    <div class="facet-tree-header"><span>COMMON</span><strong>모든 콘텐츠 공통</strong><small>6개 분류</small></div>
+    <div id="common-facet-filters" class="facet-filter-tree"></div>
+    <div id="specialty-filter-section" class="facet-specialty-section" hidden>
+      <div class="facet-tree-header specialized-tree-header"><span>DEEP DIVE</span><strong>분야별 심화 분석</strong><small>선택한 분야</small></div>
+      <div id="specialty-facet-filters" class="facet-filter-tree"></div>
+    </div>
+    <div class="facet-tree-header visual-tree-header"><span>VISUAL</span><strong>비주얼 분석</strong><small>2개 분류</small></div>
     <div id="visual-facet-filters" class="facet-filter-tree"></div>
 
     <hr class="sb-divider">
@@ -114,8 +124,8 @@
   <!-- BOARD AREA -->
   <div id="board-area">
     <section class="search-hero" aria-label="레퍼런스 통합 검색">
-      <div class="search-hero-top"><div><div class="search-eyebrow">YOUR CREATIVE INDEX</div><h1>어떤 레퍼런스를 찾으세요?</h1><p>브랜드, 제목, 메모, 색상, 혜택 및 태그까지 한 번에 검색</p></div><button type="button" class="mobile-filter-trigger" onclick="toggleMobileSidebar()">☷ 필터 탐색</button></div>
-      <div id="search-wrap" class="search-hero-input"><span class="hero-search-symbol">⌕</span><input id="search-input" type="search" placeholder="예: 파란색 프로모션, 증정품, 키치 패키지, 브랜드명…" aria-label="레퍼런스 검색" oninput="debouncedRenderBoard()"><kbd>/</kbd></div>
+      <div class="search-hero-top"><div><div class="search-eyebrow">YOUR CREATIVE INDEX</div><h1>어떤 레퍼런스를 찾으세요?</h1><p>광고 · 인플루언서 · SNS · 브랜드 · 공연을 하나의 콘텐츠 아카이브에서 분석</p></div><button type="button" class="mobile-filter-trigger" onclick="toggleMobileSidebar()">☷ 필터 탐색</button></div>
+      <div id="search-wrap" class="search-hero-input"><span class="hero-search-symbol">⌕</span><input id="search-input" type="search" placeholder="예: 인플루언서 실사용 리뷰, 공연 굿즈, 브랜드 세계관…" aria-label="레퍼런스 검색" oninput="debouncedRenderBoard()"><kbd>/</kbd></div>
       <div class="search-hero-bottom"><span id="search-results-label">전체 레퍼런스 탐색</span><div class="search-hero-tools"><button type="button" onclick="clearNavigatorFilters()">조건 초기화</button><span id="count-label">0개</span><div class="view-toggle"><button class="vt-btn active" id="grid-btn" title="그리드 뷰" onclick="setView('grid')">⊞</button><button class="vt-btn" id="list-btn" title="리스트 뷰" onclick="setView('list')">≡</button></div></div></div>
       <div id="active-filter-chips" class="active-filter-chips" aria-live="polite"></div>
     </section>
