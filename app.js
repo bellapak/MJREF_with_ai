@@ -646,14 +646,91 @@ async function ensureAssetFolder(){
   try{ return await _ensureAssetFolderPromise; } finally{ _ensureAssetFolderPromise=null; }
 }
 
+// Google Drive 공식 resumable 프로토콜: 5MB를 넘는 이미지도 4MB 청크로 전송.
+// 업로드 중 통신이 끊기면 세션에 수신 범위를 조회한 뒤 이어서 보냅니다.
+const DRIVE_UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
+const DRIVE_UPLOAD_RETRY_LIMIT = 3;
+const driveUploadDelay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function getResumableUploadProgress(sessionUrl, size){
+  const token=await ensureDriveToken();
+  const res=await fetch(sessionUrl,{
+    method:'PUT',
+    headers:{Authorization:`Bearer ${token}`,'Content-Range':`bytes */${size}`}
+  });
+  if(res.ok) return {complete:await res.json()};
+  if(res.status===308){
+    const match=(res.headers.get('Range')||'').match(/bytes=0-(\d+)/);
+    return {offset:match?Number(match[1])+1:0};
+  }
+  const detail=await res.text().catch(()=>'');
+  throw new Error(`업로드 세션 확인 실패 (${res.status}): ${detail.slice(0,200)}`);
+}
+
 async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
+  if(!(blob instanceof Blob)) throw new Error(`${name}: 업로드할 원본 파일을 찾을 수 없습니다.`);
   const folderId=parentId || await ensureAssetFolder();
-  const metadata={name,parents:[folderId],mimeType};
-  const boundary='-------refboard'+Date.now();
-  const delimiter=`\r\n--${boundary}\r\n`; const close=`\r\n--${boundary}--`;
-  const body=new Blob([delimiter,'Content-Type: application/json; charset=UTF-8\r\n\r\n',JSON.stringify(metadata),delimiter,`Content-Type: ${mimeType||'application/octet-stream'}\r\n\r\n`,blob,close],{type:`multipart/related; boundary=${boundary}`});
-  const json=await (await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,thumbnailLink',{method:'POST',headers:{'Content-Type':`multipart/related; boundary=${boundary}`},body})).json();
-  return json;
+  const type=mimeType||blob.type||'application/octet-stream';
+  const metadata={name,parents:[folderId],mimeType:type};
+
+  const begin=await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,mimeType,thumbnailLink',{
+    method:'POST',
+    headers:{'Content-Type':'application/json; charset=UTF-8','X-Upload-Content-Type':type,'X-Upload-Content-Length':String(blob.size)},
+    body:JSON.stringify(metadata)
+  });
+  const session=begin.headers.get('Location');
+  if(!session) throw new Error('Google Drive가 업로드 세션 주소를 제공하지 않았습니다. 브라우저의 네트워크/CORS 설정을 확인하세요.');
+
+  let offset=0;
+  while(offset<blob.size){
+    const end=Math.min(offset+DRIVE_UPLOAD_CHUNK_BYTES,blob.size);
+    let sent=false;
+    for(let attempt=0;attempt<DRIVE_UPLOAD_RETRY_LIMIT && !sent;attempt++){
+      try{
+        const token=await ensureDriveToken();
+        const res=await fetch(session,{
+          method:'PUT',
+          headers:{Authorization:`Bearer ${token}`,'Content-Type':type,'Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},
+          body:blob.slice(offset,end)
+        });
+        if(res.status===308){
+          const match=(res.headers.get('Range')||'').match(/bytes=0-(\d+)/);
+          offset=match?Number(match[1])+1:end;
+          sent=true;
+          continue;
+        }
+        if(res.ok){
+          const uploaded=await res.json();
+          if(!uploaded.id)throw new Error('Drive가 업로드 완료 파일 ID를 반환하지 않았습니다.');
+          return uploaded;
+        }
+        const errorText=await res.text().catch(()=>'');
+        if(![429,500,502,503,504].includes(res.status))
+          throw new Error(`Drive 업로드 오류 ${res.status}: ${errorText.slice(0,200)}`);
+        throw new Error(`일시적 Drive 업로드 오류 ${res.status}`);
+      }catch(err){
+        // 실패한 청크를 무조건 다시 보내지 않고 Drive에 수신 상태를 먼저 조회합니다.
+        try{
+          const progress=await getResumableUploadProgress(session,blob.size);
+          if(progress.complete){
+            if(!progress.complete.id)throw new Error('Drive 업로드 응답에 파일 ID가 없습니다.');
+            return progress.complete;
+          }
+          offset=progress.offset;
+          if(offset>=end){sent=true;continue;}
+        }catch(checkErr){
+          console.warn('Drive 업로드 복구 확인 실패:',checkErr);
+          if(attempt===DRIVE_UPLOAD_RETRY_LIMIT-1)throw err;
+        }
+        if(attempt===DRIVE_UPLOAD_RETRY_LIMIT-1)throw err;
+        await driveUploadDelay(650*(attempt+1));
+      }
+    }
+  }
+  // 308만 받고 끝난 드문 경우, 서버에서 완료 상태를 최종 확인합니다.
+  const result=await getResumableUploadProgress(session,blob.size);
+  if(result.complete?.id)return result.complete;
+  throw new Error('Google Drive 업로드가 끝까지 확인되지 않았습니다. 저장을 다시 눌러주세요.');
 }
 
 async function uploadDataFile(){
@@ -667,64 +744,81 @@ async function uploadDataFile(){
   }
 }
 
+// 새로고침 전후 모두 로컬 IndexedDB에서 원본 파일을 복구해 Drive에 저장합니다.
+// 기존에 성공한 슬라이드는 재업로드하지 않으므로 부분 실패 뒤 재시도가 가능합니다.
+let driveSaveBusy=false;
 async function saveToDrive(silent=false){
+  if(driveSaveBusy){if(!silent)showToast('Google Drive에 저장 중입니다.','');return false;}
+  driveSaveBusy=true;
+  let currentMedia='';
+  let completed=0;
   try{
-    await ensureDriveToken(); await ensureDriveFolder();
+    await cachePendingLocalFiles();
+    await ensureDriveToken();
+    await ensureDriveFolder();
 
-    // 🔄 양방향 동기화: 사이트 안에서 삭제된 컨텐츠가 있으면 저장 시점에 Drive에서도 함께 삭제
-    const pendingDeleteIds=[...getDeletedDriveIds()];
-    if(pendingDeleteIds.length){
-      const deletionResults=await Promise.allSettled(pendingDeleteIds.map(deleteDriveFile));
-      const failedIds=pendingDeleteIds.filter((_,index)=>deletionResults[index].status==='rejected');
-      persistDeletedDriveIds(new Set(failedIds));
-      if(failedIds.length) throw new Error(`Drive 파일 ${failedIds.length}개 삭제에 실패했습니다. 삭제 예약은 보존됩니다.`);
-    }
-
-    // ⚠️ 경쟁 조건 방지: saveData()가 짧은 간격으로 여러 번 호출되면 saveToDrive()도 겹쳐서 실행될 수 있음.
-    // 업로드 대상 목록을 동기적으로(await 이전에) 뽑아 즉시 _uploading 플래그를 세워두면,
-    // 겹쳐 실행된 다른 saveToDrive() 호출이 같은 파일을 또 업로드해서 Drive에 중복 파일이
-    // 생기는 것을 막을 수 있음(await 지점 전까지는 다른 코드가 끼어들 수 없다는 점을 이용).
-    const pendingItems=items.filter(it=>!it.driveFileId && it._file && !it._uploading);
-    pendingItems.forEach(it=>{ it._uploading=true; });
-    const pendingSlides=[];
+    const pending=[];
     items.forEach(it=>{
-      if(Array.isArray(it.carousel)){
-        it.carousel.forEach(slide=>{
-          if(!slide.driveFileId && slide._file && !slide._uploading){ slide._uploading=true; pendingSlides.push(slide); }
+      if((it.type==='image'||it.type==='video')&&!it.driveFileId&&(it._file||it.localBlobKey))
+        pending.push({media:it,label:it.title||it.fileName||'단일 파일'});
+      if(it.type==='carousel'){
+        (it.carousel||[]).forEach((slide,index)=>{
+          if(!slide.driveFileId && (slide._file||slide.localBlobKey))
+            pending.push({media:slide,label:`${it.title||'캐러셀'} (${index+1}/${it.carousel.length})`});
         });
       }
     });
 
-    await Promise.all(pendingItems.map(async it=>{
-      try{
-        const f=await uploadBlobToDrive(it._file,it.fileName||it._file.name||`${it.id}`,it.mimeType||it._file.type||'application/octet-stream');
-        it.driveFileId=f.id; it.mimeType=f.mimeType||it.mimeType; it.thumbnailLink=f.thumbnailLink||it.thumbnailLink||'';
-        delete it._file;
-      }finally{ delete it._uploading; }
-    }));
-    await Promise.all(pendingSlides.map(async slide=>{
-      try{
-        const f=await uploadBlobToDrive(slide._file,slide.fileName||slide._file.name||`${slide.id}`,slide.mimeType||slide._file.type||'image/png');
-        slide.driveFileId=f.id; slide.mimeType=f.mimeType||slide.mimeType; slide.thumbnailLink=f.thumbnailLink||slide.thumbnailLink||'';
-        delete slide._file;
-      }finally{ delete slide._uploading; }
-    }));
+    for(const {media,label} of pending){
+      currentMedia=label;
+      const blob=media._file||await getLocalBlob(media.localBlobKey);
+      if(!blob)throw new Error(`${label}: 브라우저에 원본 파일이 없습니다. 이미지 원본을 다시 첨부해 주세요.`);
+      const f=await uploadBlobToDrive(blob,media.fileName||label,media.mimeType||blob.type||'application/octet-stream');
+      media.driveFileId=f.id;
+      media.mimeType=f.mimeType||media.mimeType;
+      media.thumbnailLink=f.thumbnailLink||media.thumbnailLink||'';
+      delete media._file;
+      completed++;
+      // 부분 성공 상태를 즉시 로컬 저장하여 다음 재시도에서 중복 업로드 방지.
+      saveLocal();
+    }
+
+    // 아직 원본이 업로드되지 않은 미디어가 있으면 JSON만 먼저 저장하지 않습니다.
+    const missing=[];
+    items.forEach(it=>{
+      if((it.type==='image'||it.type==='video')&&it.localBlobKey&&!it.driveFileId)missing.push(it.title||it.fileName||it.id);
+      if(it.type==='carousel') (it.carousel||[]).forEach(slide=>{
+        if(slide.localBlobKey&&!slide.driveFileId)missing.push(slide.fileName||slide.id);
+      });
+    });
+    if(missing.length)throw new Error(`업로드하지 못한 이미지 ${missing.length}개가 있습니다. (${missing[0]})`);
+
+    currentMedia='레퍼런스 목록(JSON)';
     await uploadDataFile();
+    // 매체 및 JSON이 Drive에 안전하게 업로드된 다음에만 삭제 예약을 처리합니다.
+    const pendingDeleteIds=[...getDeletedDriveIds()];
+    if(pendingDeleteIds.length){
+      const results=await Promise.allSettled(pendingDeleteIds.map(deleteDriveFile));
+      const failed=pendingDeleteIds.filter((_,i)=>results[i].status==='rejected');
+      persistDeletedDriveIds(new Set(failed));
+      if(failed.length){
+        setManualDrivePending(true);
+        if(!silent)showToast(`레퍼런스 저장 완료 · 삭제 예약 ${failed.length}개는 다음에 재시도됩니다.`,'error');
+        return false;
+      }
+    }
     saveLocal();
     setManualDrivePending(false);
-    if(!silent) showToast('Google Drive 수동 저장 완료','success'); 
-    
-    const df = $('detail-fields');
-    if(df && selectedId) {
-       const currIt = items.find(i=>i.id===selectedId);
-       if(currIt && currIt.driveFileId) {
-          const els = df.querySelectorAll('.detail-val');
-          if(els.length > 0 && els[els.length-1].previousSibling.textContent === 'DRIVE FILE ID') {
-              els[els.length-1].textContent = currIt.driveFileId;
-          }
-       }
-    }
-  }catch(e){ console.error(e); setManualDrivePending(true); if(!silent) showToast(e.message||'Drive 저장 실패','error'); }
+    if(!silent)showToast(`Google Drive 저장 완료${completed?` · 미디어 ${completed}개 업로드`:''}`,'success');
+    return true;
+  }catch(e){
+    console.error('Google Drive 수동 저장 실패:',{step:currentMedia,completed,error:e});
+    setManualDrivePending(true);
+    const prefix=currentMedia?`${currentMedia} 저장 실패`: 'Drive 저장 실패';
+    const msg=e instanceof TypeError && /fetch/i.test(e.message)?'네트워크 연결 또는 Google Drive 요청 차단을 확인해 주세요.':(e.message||'알 수 없는 오류');
+    if(!silent)showToast(`${prefix}: ${msg}`,'error');
+    return false;
+  }finally{driveSaveBusy=false;}
 }
 
 async function syncItemsWithDriveAssets(){
