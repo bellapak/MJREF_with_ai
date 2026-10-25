@@ -293,6 +293,72 @@ function showToast(msg,type=''){
   setTimeout(()=>{t.className='';},2200);
 }
 
+// 콘텐츠별 공개 성과 지표. 자동 수집/AI 추정이 아닌 사용자가 확인한 값만 기록합니다.
+// null = 미입력, 0 = 실제 0회/0개. 이전 레퍼런스 데이터와도 호환됩니다.
+function normalizeSocialCount(value){
+  if(value === null || value === undefined || String(value).trim() === '') return null;
+  const raw=String(value).replace(/,/g,'').trim();
+  if(!/^\d+$/.test(raw)) return null;
+  const n=Number(raw);
+  return Number.isSafeInteger(n) && n>=0 ? n : null;
+}
+function normalizeSocialMetrics(raw={}){
+  const source=raw && typeof raw==='object' && !Array.isArray(raw) ? raw : {};
+  return {...source,
+    views:normalizeSocialCount(source.views),
+    likes:normalizeSocialCount(source.likes),
+    recordedAt:typeof source.recordedAt==='string'?source.recordedAt:''
+  };
+}
+function getItemSocialMetrics(raw={}){
+  const source=raw.socialMetrics && typeof raw.socialMetrics==='object' ? raw.socialMetrics :
+    (raw.engagement && typeof raw.engagement==='object'?raw.engagement:
+    (raw.metrics && typeof raw.metrics==='object'?raw.metrics:{}));
+  return normalizeSocialMetrics({
+    ...source,
+    views:source.views??raw.viewCount??raw.views??null,
+    likes:source.likes??raw.likeCount??raw.likes??null
+  });
+}
+function socialCountText(value){return value===null||value===undefined?'':Number(value).toLocaleString('ko-KR');}
+function readSocialCount(id,label){
+  const raw=$(id)?.value?.trim()??'';
+  if(!raw)return null;
+  if(!/^(?:\d{1,3}(?:,\d{3})+|\d+)$/.test(raw)){
+    throw new Error(`${label}는 0 이상의 정수로 입력해 주세요. (예: 12,345)`);
+  }
+  const num=Number(raw.replace(/,/g,''));
+  if(!Number.isSafeInteger(num)||num<0)throw new Error(`${label}가 입력 가능한 숫자 범위를 벗어났습니다.`);
+  return num;
+}
+function collectSocialMetricInputs(prefix,existing={}){
+  const previous=normalizeSocialMetrics(existing);
+  const views=readSocialCount(`${prefix}-views`,'조회수');
+  const likes=readSocialCount(`${prefix}-likes`,'좋아요 수');
+  const changed=previous.views!==views || previous.likes!==likes;
+  return {...previous,views,likes,
+    recordedAt:changed?(views!==null||likes!==null?new Date().toISOString():''):previous.recordedAt
+  };
+}
+function socialMetricInputsHTML(prefix,metrics={}){
+  const m=normalizeSocialMetrics(metrics);
+  const updated=m.recordedAt && !Number.isNaN(Date.parse(m.recordedAt))
+    ? `<span class="social-metric-recorded">마지막 기록: ${esc(new Date(m.recordedAt).toLocaleString('ko-KR'))}</span>` : '';
+  return `<section class="social-metric-editor" aria-label="콘텐츠 공개 성과 기록">
+    <div class="social-metric-editor-heading">콘텐츠 반응 지표 <small>수동 기록</small></div>
+    <div class="social-metric-input-grid">
+      <div class="form-row"><label class="form-label" for="${prefix}-views">조회수</label><input type="text" inputmode="numeric" autocomplete="off" class="detail-input" id="${prefix}-views" value="${socialCountText(m.views)}" placeholder="예: 12,345" aria-label="조회수"></div>
+      <div class="form-row"><label class="form-label" for="${prefix}-likes">좋아요 수</label><input type="text" inputmode="numeric" autocomplete="off" class="detail-input" id="${prefix}-likes" value="${socialCountText(m.likes)}" placeholder="예: 567" aria-label="좋아요 수"></div>
+    </div>
+    <p class="social-metric-help">직접 확인한 숫자만 입력합니다. 빈칸은 미입력이며 0과 구분됩니다. API 호출 없이 저장됩니다.</p>${updated}
+  </section>`;
+}
+function socialMetricCardHTML(it){
+  const m=normalizeSocialMetrics(it.socialMetrics);
+  if(m.views===null && m.likes===null)return '';
+  return `<div class="card-social-metrics" aria-label="직접 기록한 성과"><span>${m.views===null?'조회 —':'조회 '+socialCountText(m.views)}</span><span>${m.likes===null?'좋아요 —':'좋아요 '+socialCountText(m.likes)}</span></div>`;
+}
+
 function normalizeItem(raw={}){
   let src=raw.src || raw.url || raw.mediaUrl || '';
   const sourceUrl=raw.sourceUrl || raw.source_url || '';
@@ -324,7 +390,8 @@ function normalizeItem(raw={}){
     carousel: Array.isArray(raw.carousel)?raw.carousel.map(slide=>normalizeMediaRef(slide)):[],
     ts: raw.ts || raw.createdAt || Date.now(),
     _file: raw._file,
-    videoAnalysis: raw.videoAnalysis && typeof raw.videoAnalysis==='object' ? normalizeVideoAnalysis(raw.videoAnalysis) : null
+    videoAnalysis: raw.videoAnalysis && typeof raw.videoAnalysis==='object' ? normalizeVideoAnalysis(raw.videoAnalysis) : null,
+    socialMetrics: getItemSocialMetrics(raw)
   };
 }
 
@@ -1683,7 +1750,7 @@ function cardNode(it,index=0){
 
   const info=document.createElement('div'); info.className='card-info';
   const tags=PRIMARY_FACET_KEYS.flatMap(k=>(it.facets?.[k]||[]).slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
-  info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div><div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
+  info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div>${socialMetricCardHTML(it)}<div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
   const editBtn=info.querySelector('.card-title-edit-btn');
   editBtn.onclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
@@ -1999,7 +2066,7 @@ function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes','add-views','add-likes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
@@ -2013,7 +2080,8 @@ function fileToItem(file, extra={}){
     driveFileId:'', mimeType:file.type||'image/png', fileName:file.name||`paste_${Date.now()}.png`, localBlobKey,
     catIds:Array.isArray(extra.catIds)?extra.catIds:[], facets:{...cleanFacets(extra.facets),hex:extra.facets?.hex||''}, platform:extra.platform||'', brand:extra.brand||'', sourceType:extra.sourceType||'paste', sourceUrl:extra.sourceUrl||'',
     caption:extra.caption||'', hook:extra.hook||'', cta:extra.cta||'', imageCopy:extra.imageCopy||'', visualNotes:extra.visualNotes||'', contentNotes:extra.contentNotes||'', notes:extra.notes||'',
-    carousel:Array.isArray(extra.carousel)?extra.carousel:[], ts:extra.ts||Date.now(), _file:file
+    carousel:Array.isArray(extra.carousel)?extra.carousel:[], ts:extra.ts||Date.now(), _file:file,
+    socialMetrics:normalizeSocialMetrics(extra.socialMetrics)
   };
   inheritTitleFacets(item);
   saveLocalBlob(localBlobKey,file,{fileName:item.fileName,mimeType:item.mimeType}).catch(console.warn);
@@ -2024,7 +2092,9 @@ function handleModalFile(e){ pendingFile=e.target.files?.[0]||null; $('modal-fil
 function handleCarouselFiles(e){ pendingCarouselFiles=[...(e.target.files||[])]; const list=$('carousel-preview-list'); list.innerHTML=''; pendingCarouselFiles.forEach(f=>{const img=document.createElement('img'); img.src=URL.createObjectURL(f); img.style.cssText='width:64px;height:64px;object-fit:cover;border-radius:8px'; list.appendChild(img);}); $('carousel-count-label').textContent=`${pendingCarouselFiles.length}개 선택됨`; }
 
 async function saveFromModal(){
-  const base={title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,notes:$('add-notes').value,facets:readFacetFields('add'),ts:Date.now()};
+  let socialMetrics;
+  try{socialMetrics=collectSocialMetricInputs('add');}catch(error){showToast(error.message,'error');return;}
+  const base={socialMetrics,title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,notes:$('add-notes').value,facets:readFacetFields('add'),ts:Date.now()};
   const url=$('add-url').value.trim();
   if(modalMode==='carousel'){
     if(!pendingCarouselFiles.length){showToast('캐러셀 이미지를 선택해주세요','error');return;}
@@ -2370,6 +2440,7 @@ function renderDetail(){
     <div class="detail-section-title">수정</div>
     <div class="form-row"><label class="form-label">제목</label><input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
+    ${socialMetricInputsHTML('detail',it.socialMetrics)}
     ${it.type==='video'?videoAnalysisPanelHTML(it):''}
     <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
     <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
@@ -2392,6 +2463,9 @@ function renderDetail(){
 
 function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
+  let socialMetrics;
+  try{socialMetrics=collectSocialMetricInputs('detail',it.socialMetrics);}catch(error){showToast(error.message,'error');return;}
+  it.socialMetrics=socialMetrics;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
   it.facets=readFacetFields('detail',it.facets);
