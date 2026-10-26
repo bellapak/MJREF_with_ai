@@ -2497,6 +2497,8 @@ function videoAnalysisPanelHTML(it){
   const a=it.videoAnalysis||null;
   const status=a?.status==='done'?'분석 완료':a?.status==='queued'?'분석 요청 대기':a?.status==='error'?'분석 오류':'분석 전';
   const fmt=a?.mode==='full'?'영상·음성 정밀 분석':'대표 프레임 6장';
+  const legacyBlobSizeError=a?.status==='error' && /blob\.getSize is not a function/i.test(String(a.error||''));
+  const retryGuide=legacyBlobSizeError?'VideoAnalysis.gs 교체 후 Apps Script에서 mjrefAnalyzePendingVideos를 다시 실행하세요. 기존 프레임 6장을 재사용하므로 분석 준비나 Drive 재업로드는 필요 없습니다.':'';
   const result=a?.result;
   const usage=a?.usage;
   const count=Number(usage?.promptTokenCount)||0, total=Number(usage?.totalTokenCount)||0;
@@ -2510,7 +2512,7 @@ function videoAnalysisPanelHTML(it){
    <button type="button" class="detail-btn primary video-ai-main" id="video-ai-prepare" onclick="prepareVideoAnalysis()">${a?.status==='done'?'다시 분석 준비':'선택 모드 분석 준비'}</button>
    <p class="video-ai-guide">준비 → 상단 <b>Drive에 저장</b> → Apps Script의 <code>mjrefAnalyzePendingVideos</code> 수동 실행 → 아래 결과 가져오기</p>
    <div class="video-ai-actions"><button type="button" class="detail-btn" onclick="openAiScriptConsole()">Apps Script 열기 ↗</button><button type="button" class="detail-btn" id="video-ai-sync" onclick="pullVideoAnalysisResults()">결과 가져오기 ↻</button></div>
-   <p id="video-ai-message" class="video-ai-message">${esc(a?.error||(a?.status==='queued'?`${fmt} 요청이 로컬에 준비됐습니다. Drive에 저장해 주세요.`:'파일을 선택하고 분석을 준비하세요.'))}</p>
+   <p id="video-ai-message" class="video-ai-message">${esc(retryGuide||(a?.error)||(a?.status==='queued'?`${fmt} 요청이 로컬에 준비됐습니다. Drive에 저장해 주세요.`:'파일을 선택하고 분석을 준비하세요.'))}</p>
    ${Array.isArray(a?.frames)&&a.frames.length?`<div class="video-ai-frames">${a.frames.map((f,i)=>`<span>${i+1} · ${Number(f.timeSec).toFixed(1)}초${f.driveFileId?' ✓':''}</span>`).join('')}</div>`:''}
    ${result?`<div class="video-ai-result"><div class="video-ai-result-head"><strong>${esc(fmt)} 결과</strong><span>${esc(a.model||'')}</span></div>${fields.filter(([,k])=>result[k]).map(([label,k])=>`<div class="video-ai-result-field"><b>${label}</b><p>${esc(String(result[k]))}</p></div>`).join('')}${usage?`<div class="video-ai-usage">토큰 ${total.toLocaleString('ko-KR')}개 · 참고 비용 약 $${approx.toFixed(4)} (유료 표준 단순 추정)</div>`:''}${result.suggestedFacets?`<button type="button" class="detail-btn" onclick="applyVideoAnalysisFacets()">추천 분류 태그 반영</button>`:''}</div>`:''}
   </section>`;
