@@ -405,7 +405,8 @@ function normalizeVideoAnalysis(raw){
   return {mode:raw.mode==='full'?'full':'frames',status:['queued','done','error'].includes(raw.status)?raw.status:'queued',
     requestedAt:String(raw.requestedAt||''),analyzedAt:String(raw.analyzedAt||''),model:String(raw.model||''),
     frames:Array.isArray(raw.frames)?raw.frames.slice(0,6).map(f=>({timeSec:Number(f.timeSec)||0,localBlobKey:String(f.localBlobKey||''),driveFileId:String(f.driveFileId||''),fileName:String(f.fileName||'')})):[],
-    result,usage:raw.usage&&typeof raw.usage==='object'?raw.usage:null,error:String(raw.error||'')};
+    result,usage:raw.usage&&typeof raw.usage==='object'?raw.usage:null,error:String(raw.error||''),
+     tagging:raw.tagging&&typeof raw.tagging==='object'?{added:Number(raw.tagging.added)||0,total:Number(raw.tagging.total)||0,appliedAt:String(raw.tagging.appliedAt||'')}:null};
 }
 
 function normalizeMediaRef(raw={}){
@@ -2495,27 +2496,47 @@ const MJREF_GEMINI_PRICE_INPUT=0.30;  // Gemini 3.5 Flash-Lite paid standard USD
 const MJREF_GEMINI_PRICE_OUTPUT=2.50;
 function videoAnalysisPanelHTML(it){
   const a=it.videoAnalysis||null;
-  const status=a?.status==='done'?'분석 완료':a?.status==='queued'?'분석 요청 대기':a?.status==='error'?'분석 오류':'분석 전';
-  const fmt=a?.mode==='full'?'영상·음성 정밀 분석':'대표 프레임 6장';
-  const legacyBlobSizeError=a?.status==='error' && /blob\.getSize is not a function/i.test(String(a.error||''));
-  const retryGuide=legacyBlobSizeError?'VideoAnalysis.gs 교체 후 Apps Script에서 mjrefAnalyzePendingVideos를 다시 실행하세요. 기존 프레임 6장을 재사용하므로 분석 준비나 Drive 재업로드는 필요 없습니다.':'';
-  const result=a?.result;
-  const usage=a?.usage;
-  const count=Number(usage?.promptTokenCount)||0, total=Number(usage?.totalTokenCount)||0;
-  const out=Math.max(0,total-count);
-  const approx=(count*MJREF_GEMINI_PRICE_INPUT+out*MJREF_GEMINI_PRICE_OUTPUT)/1e6;
-  const fields=[['요약','summary'],['초반 후킹','hook'],['영상 전개','structure'],['비주얼·연출','visualStyle'],['마케팅 소구','marketingAngle'],['크리에이터 역할','creatorRole'],['음성·내레이션','audio'],['편집·리듬','cutRhythm'],['관찰 근거·한계','limitations']];
-  return `<section class="video-ai-box" aria-label="AI 영상 분석">
-   <div class="video-ai-heading"><strong>AI 영상 분석</strong><span class="video-ai-state">${esc(status)}</span></div>
-   <p class="video-ai-description">필요한 영상에만 분석을 요청합니다. 업로드만으로 API를 호출하지 않습니다.</p>
-   <div class="video-ai-modes"><label><input type="radio" name="video-ai-mode" value="frames" ${a?.mode!=='full'?'checked':''}> <b>빠른 분석</b><small>대표 프레임 6장 · 무음</small></label><label><input type="radio" name="video-ai-mode" value="full" ${a?.mode==='full'?'checked':''}> <b>정밀 분석</b><small>영상 + 음성 · 최대 12MB</small></label></div>
-   <button type="button" class="detail-btn primary video-ai-main" id="video-ai-prepare" onclick="prepareVideoAnalysis()">${a?.status==='done'?'다시 분석 준비':'선택 모드 분석 준비'}</button>
-   <p class="video-ai-guide">준비 → 상단 <b>Drive에 저장</b> → Apps Script의 <code>mjrefAnalyzePendingVideos</code> 수동 실행 → 아래 결과 가져오기</p>
-   <div class="video-ai-actions"><button type="button" class="detail-btn" onclick="openAiScriptConsole()">Apps Script 열기 ↗</button><button type="button" class="detail-btn" id="video-ai-sync" onclick="pullVideoAnalysisResults()">결과 가져오기 ↻</button></div>
-   <p id="video-ai-message" class="video-ai-message">${esc(retryGuide||(a?.error)||(a?.status==='queued'?`${fmt} 요청이 로컬에 준비됐습니다. Drive에 저장해 주세요.`:'파일을 선택하고 분석을 준비하세요.'))}</p>
-   ${Array.isArray(a?.frames)&&a.frames.length?`<div class="video-ai-frames">${a.frames.map((f,i)=>`<span>${i+1} · ${Number(f.timeSec).toFixed(1)}초${f.driveFileId?' ✓':''}</span>`).join('')}</div>`:''}
-   ${result?`<div class="video-ai-result"><div class="video-ai-result-head"><strong>${esc(fmt)} 결과</strong><span>${esc(a.model||'')}</span></div>${fields.filter(([,k])=>result[k]).map(([label,k])=>`<div class="video-ai-result-field"><b>${label}</b><p>${esc(String(result[k]))}</p></div>`).join('')}${usage?`<div class="video-ai-usage">토큰 ${total.toLocaleString('ko-KR')}개 · 참고 비용 약 $${approx.toFixed(4)} (유료 표준 단순 추정)</div>`:''}${result.suggestedFacets?`<button type="button" class="detail-btn" onclick="applyVideoAnalysisFacets()">추천 분류 태그 반영</button>`:''}</div>`:''}
+  const status=a?.status==='done'?'자동 태그 완료':a?.status==='queued'?'태그 분류 대기':a?.status==='error'?'태그 분류 오류':'분류 전';
+  const mode=a?.mode==='full'?'영상·음성 정밀 분석':'대표 프레임 6장';
+  const tags=videoAiFilteredSuggestions(a?.result?.suggestedFacets);
+  const count=Object.values(tags).reduce((n,vals)=>n+vals.length,0);
+  const existingCount=Object.entries(it.facets||{}).reduce((n,[k,vals])=>n+(MJREF_VIDEO_AUTO_TAG_KEYS.includes(k)&&Array.isArray(vals)?vals.length:0),0);
+  const guide=a?.status==='error' && /blob\.getSize is not a function/i.test(a.error||'')
+    ?'VideoAnalysis.gs를 교체한 뒤 Apps Script에서 다시 실행하면 저장된 프레임을 재사용합니다.'
+    :a?.error||'';
+  return `<section class="video-ai-box" aria-label="영상 자동 태그">
+    <div class="video-ai-heading"><strong>AI 영상 자동 태그</strong><span class="video-ai-state">${esc(status)}</span></div>
+    <p class="video-ai-description">분석 설명문을 만들지 않고 기존 MJREF 필터에 태그를 직접 기록합니다. 태그는 기존 수동 분류와 합쳐지며 삭제되지 않습니다.</p>
+    <div class="video-ai-modes"><label><input type="radio" name="video-ai-mode" value="frames" ${a?.mode!=='full'?'checked':''}> <b>빠른 분류</b><small>대표 프레임 6장 · 음성 제외</small></label><label><input type="radio" name="video-ai-mode" value="full" ${a?.mode==='full'?'checked':''}> <b>정밀 분류</b><small>영상 + 음성 · 최대 12MB</small></label></div>
+    <button type="button" class="detail-btn primary video-ai-main" id="video-ai-prepare" onclick="prepareVideoAnalysis()">${a?.status==='done'?'새 분석 준비':'영상 태그 분석 준비'}</button>
+    ${a?.status==='error'||(a?.status==='done'&&count===0)?'<button type="button" class="detail-btn" onclick="retryVideoAutoTags()">저장된 자료로 태그 재분류</button>':''}
+    <p class="video-ai-guide">분석 준비 → <b>Drive에 저장</b> → Apps Script에서 <code>mjrefAnalyzePendingVideos</code> 실행. 완료된 태그는 Drive 데이터에 자동 기록됩니다.</p>
+    <div class="video-ai-actions"><button type="button" class="detail-btn" onclick="openAiScriptConsole()">Apps Script 열기 ↗</button><button type="button" class="detail-btn" id="video-ai-sync" onclick="pullVideoAnalysisResults()">태그 동기화 ↻</button></div>
+    <p id="video-ai-message" class="video-ai-message">${esc(guide||(a?.status==='queued'?'Drive에 저장 후 Apps Script를 실행하세요. 태그가 준비되면 이 화면에서 자동으로 확인합니다.':a?.status==='done'?`자동 분류 태그 ${count}개 · 현재 저장된 분류 ${existingCount}개`:'필요할 때만 분석을 실행합니다. 업로드만으로 크레딧을 사용하지 않습니다.'))}</p>
+    ${a?.status==='done'&&count?`<div class="mini-pill-row">${Object.entries(tags).flatMap(([key,vals])=>vals.map(v=>`<span class="mini-pill" title="${esc(FACET_NAMES[key]||key)}">${esc(v)}</span>`)).join('')}</div>`:''}
   </section>`;
+}
+// Never accept AI-created taxonomy values or unknown classification keys.
+const MJREF_VIDEO_AUTO_TAG_KEYS=["contentArea","objective","contentRole","contentFormat","tone","channel","industry","strategy","journey","offer","narrative","creatorType","partnership","creatorFormat","trustSignal","audienceRelation","socialMechanic","brandAsset","editorialType","experienceType","cultureFocus","color","visual","cta"];
+function videoAiFilteredSuggestions(raw){
+  const cleaned={};
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return cleaned;
+  for(const key of MJREF_VIDEO_AUTO_TAG_KEYS){
+    const arr=Array.isArray(raw[key])?raw[key]:typeof raw[key]==='string'?[raw[key]]:[];
+    const valid=[...new Set(arr.filter(v=>typeof v==='string'&&FACETS[key]?.includes(v)))].slice(0,4);
+    if(valid.length)cleaned[key]=valid;
+  }
+  return cleaned;
+}
+function mergeVideoAutoTags(it,raw){
+  const tags=videoAiFilteredSuggestions(raw);
+  const current=cleanFacets(it.facets);
+  let added=0;
+  for(const [key,vals] of Object.entries(tags))for(const value of vals){
+    if(!current[key].includes(value)){current[key].push(value);added++;}
+  }
+  it.facets={...current,hex:it.facets?.hex||''};
+  return added;
 }
 function videoAiMessage(msg,kind=''){
   const el=$('video-ai-message');if(el){el.textContent=msg;el.dataset.status=kind;}
@@ -2600,43 +2621,57 @@ async function prepareVideoAnalysis(){
   }catch(e){console.error('video analysis prepare',e);videoAiMessage(e.message||'분석 요청 준비 실패','error');showToast(e.message||'분석 준비 오류','error');}
   finally{mjrefVideoPreparing=false;if(button&&button.isConnected)button.disabled=false;}
 }
-async function pullVideoAnalysisResults(){
+async function pullVideoAnalysisResults({silent=false}={}){
   const it=items.find(x=>x.id===selectedId);if(!it||it.type!=='video'||mjrefVideoSyncBusy)return;
-  if(!it.videoAnalysis?.requestedAt){videoAiMessage('먼저 분석 요청을 준비하세요.');return;}
+  if(!it.videoAnalysis?.requestedAt){if(!silent)videoAiMessage('먼저 태그 분석을 준비하세요.');return;}
   mjrefVideoSyncBusy=true;const button=$('video-ai-sync');if(button)button.disabled=true;
-  videoAiMessage('Drive에서 이 영상의 분석 결과만 확인하는 중입니다…');
+  if(!silent)videoAiMessage('Drive에서 이 영상의 분류 태그를 확인하는 중입니다…');
   try{
     await ensureDriveToken();await ensureDriveFolder();
-    if(!gdriveDataFileId)throw new Error('Drive 레퍼런스 데이터 파일이 없습니다. 먼저 Drive에 저장해 주세요.');
+    if(!gdriveDataFileId)throw new Error('Drive 데이터 파일이 없습니다. 먼저 Drive에 저장하세요.');
     const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveDataFileId}?alt=media`)).json();
     const remote=(data.items||[]).find(x=>x.id===it.id);
     const analysis=remote?.videoAnalysis;
-    if(!analysis)throw new Error('Drive에 분석 요청이 없습니다. 먼저 Drive에 저장했는지 확인하세요.');
-    if(analysis.requestedAt!==it.videoAnalysis.requestedAt)throw new Error('Drive와 로컬의 분석 요청 버전이 다릅니다. 데이터를 덮어쓰지 않았습니다.');
-    if(analysis.status==='queued'){videoAiMessage('아직 대기 중입니다. Apps Script에서 mjrefAnalyzePendingVideos를 직접 실행하세요.');return;}
+    if(!analysis)throw new Error('Drive에 이 영상의 분석 요청이 없습니다.');
+    if(analysis.requestedAt!==it.videoAnalysis.requestedAt)throw new Error('로컬과 Drive의 분석 요청 버전이 달라 자동 병합하지 않았습니다.');
+    if(analysis.status==='queued'){
+      if(!silent)videoAiMessage('아직 분류 대기 중입니다. Apps Script에서 mjrefAnalyzePendingVideos를 실행하세요.');
+      return;
+    }
     if(analysis.status!=='done'&&analysis.status!=='error')throw new Error('알 수 없는 분석 상태입니다.');
     it.videoAnalysis=normalizeVideoAnalysis(analysis);
-    await saveData();renderDetail();
-    if(analysis.status==='error')videoAiMessage(`분석 실패: ${analysis.error||'Apps Script 실행 로그를 확인하세요.'}`,'error');
-    else showToast('영상 AI 분석 결과를 가져왔습니다. Drive 재저장 필요','success');
-  }catch(e){console.error('video analysis result import',e);videoAiMessage(e.message||'분석 결과 가져오기 실패','error');}
-  finally{mjrefVideoSyncBusy=false;if(button&&button.isConnected)button.disabled=false;}
+    const applied=analysis.status==='done'?mergeVideoAutoTags(it,analysis.result?.suggestedFacets):0;
+    // Only update this item in browser storage; never overwrite other local edits with the remote Drive JSON.
+    saveLocal();
+    renderFacetFilters();renderBoard();updateAiClassificationStats();
+    // Auto refresh must not erase a user's unsaved edits in the open detail editor.
+    if(!silent)renderDetail();
+    else {
+      // Refresh only the video tag box, leaving title, metrics, memo and facet drafts untouched.
+      const box=$('detail-fields')?.querySelector('.video-ai-box');
+      if(box)box.outerHTML=videoAnalysisPanelHTML(it);
+    }
+    if(analysis.status==='error')videoAiMessage(`분류 실패: ${analysis.error||'Apps Script 실행 로그를 확인하세요.'}`,'error');
+    else if(!silent)showToast(`영상 태그 동기화 완료 · 새 태그 ${applied}개 · Drive에는 이미 적용됨`,'success');
+  }catch(e){
+    console.error('video auto tags sync',e);
+    if(!silent)videoAiMessage(e.message||'태그 동기화 실패','error');
+  }finally{mjrefVideoSyncBusy=false;if(button&&button.isConnected)button.disabled=false;}
 }
-function applyVideoAnalysisFacets(){
-  const it=items.find(x=>x.id===selectedId),suggest=it?.videoAnalysis?.result?.suggestedFacets;
-  if(!suggest||typeof suggest!=='object')return;
-  const allowed=['contentArea','contentRole','strategy','narrative','tone','creatorType','creatorFormat','visual','channel'];
-  let applied=0;
-  const facets=cleanFacets(it.facets);
-  for(const key of allowed){
-    const incoming=Array.isArray(suggest[key])?suggest[key]:[];
-    const valid=incoming.filter(v=>FACETS[key]?.includes(v));
-    for(const v of valid){if(!facets[key].includes(v)){facets[key].push(v);applied++;}}
+async function retryVideoAutoTags(){
+  const it=items.find(x=>x.id===selectedId);
+  if(!it||it.type!=='video'||!it.videoAnalysis)return;
+  const a=it.videoAnalysis;
+  const frameReady=a.mode==='frames'&&Array.isArray(a.frames)&&a.frames.length===6&&a.frames.every(f=>f.driveFileId);
+  const fullReady=a.mode==='full'&&!!it.driveFileId;
+  if(!frameReady&&!fullReady){
+    videoAiMessage(a.mode==='full'?'Drive에 저장된 원본 영상을 찾지 못했습니다. 빠른 분류를 새로 준비하세요.':'Drive에 저장된 프레임 6장이 없어 빠른 분류를 새로 준비해야 합니다.','error');return;
   }
-  it.facets={...facets,hex:it.facets?.hex||''};
-  saveData();renderBoard();renderDetail();showToast(`추천 태그 ${applied}개 추가됨 · Drive 수동 저장 필요`,'success');
+  if(!confirm('기존 자료를 재사용해 태그 분류를 다시 요청할까요? Gemini API 사용량이 추가로 발생할 수 있습니다.'))return;
+  a.status='queued';a.requestedAt=new Date().toISOString();a.error='';a.result=null;a.tagging=null;
+  await saveData();renderDetail();
+  showToast('태그 재분류 대기 등록 · Drive에 저장 후 Apps Script 실행','success');
 }
-
 // GitHub Pages 단독 배포: 모든 분류는 브라우저에서 수동으로 저장합니다.
 // 기존 브라우저에 남아 있을 수 있는 AI 연동 키만 삭제합니다.
 function clearLegacyBrowserApiKeys(){
@@ -2644,6 +2679,16 @@ function clearLegacyBrowserApiKeys(){
 }
 
 // ─── Initialization ───
+// While the user views a queued video, quietly import finished tags from Drive.
+// No Gemini API is called by this polling loop, and no Drive writes are made.
+setInterval(()=>{
+  const it=items.find(x=>x.id===selectedId);
+  if(!it||it.type!=='video'||it.videoAnalysis?.status!=='queued')return;
+  if(isManualDrivePending()||driveSaveBusy||mjrefVideoSyncBusy)return;
+  if(!(gdriveToken||restoreCachedDriveToken()))return;
+  pullVideoAnalysisResults({silent:true});
+},20000);
+
 window.addEventListener('DOMContentLoaded',()=>{
   let cachedToken='';
   try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
