@@ -307,6 +307,7 @@ function normalizeSocialMetrics(raw={}){
   return {...source,
     views:normalizeSocialCount(source.views),
     likes:normalizeSocialCount(source.likes),
+    comments:normalizeSocialCount(source.comments),
     recordedAt:typeof source.recordedAt==='string'?source.recordedAt:''
   };
 }
@@ -317,7 +318,8 @@ function getItemSocialMetrics(raw={}){
   return normalizeSocialMetrics({
     ...source,
     views:source.views??raw.viewCount??raw.views??null,
-    likes:source.likes??raw.likeCount??raw.likes??null
+    likes:source.likes??raw.likeCount??raw.likes??null,
+    comments:source.comments??raw.commentCount??null
   });
 }
 function socialCountText(value){return value===null||value===undefined?'':Number(value).toLocaleString('ko-KR');}
@@ -335,9 +337,10 @@ function collectSocialMetricInputs(prefix,existing={}){
   const previous=normalizeSocialMetrics(existing);
   const views=readSocialCount(`${prefix}-views`,'조회수');
   const likes=readSocialCount(`${prefix}-likes`,'좋아요 수');
-  const changed=previous.views!==views || previous.likes!==likes;
-  return {...previous,views,likes,
-    recordedAt:changed?(views!==null||likes!==null?new Date().toISOString():''):previous.recordedAt
+  const comments=readSocialCount(`${prefix}-comments`,'댓글 수');
+  const changed=previous.views!==views || previous.likes!==likes || previous.comments!==comments;
+  return {...previous,views,likes,comments,
+    recordedAt:changed?(views!==null||likes!==null||comments!==null?new Date().toISOString():''):previous.recordedAt
   };
 }
 function socialMetricInputsHTML(prefix,metrics={}){
@@ -349,14 +352,15 @@ function socialMetricInputsHTML(prefix,metrics={}){
     <div class="social-metric-input-grid">
       <div class="form-row"><label class="form-label" for="${prefix}-views">조회수</label><input type="text" inputmode="numeric" autocomplete="off" class="detail-input" id="${prefix}-views" value="${socialCountText(m.views)}" placeholder="예: 12,345" aria-label="조회수"></div>
       <div class="form-row"><label class="form-label" for="${prefix}-likes">좋아요 수</label><input type="text" inputmode="numeric" autocomplete="off" class="detail-input" id="${prefix}-likes" value="${socialCountText(m.likes)}" placeholder="예: 567" aria-label="좋아요 수"></div>
+      <div class="form-row"><label class="form-label" for="${prefix}-comments">댓글 수</label><input type="text" inputmode="numeric" autocomplete="off" class="detail-input" id="${prefix}-comments" value="${socialCountText(m.comments)}" placeholder="예: 42" aria-label="댓글 수"></div>
     </div>
     <p class="social-metric-help">직접 확인한 숫자만 입력합니다. 빈칸은 미입력이며 0과 구분됩니다. API 호출 없이 저장됩니다.</p>${updated}
   </section>`;
 }
 function socialMetricCardHTML(it){
   const m=normalizeSocialMetrics(it.socialMetrics);
-  if(m.views===null && m.likes===null)return '';
-  return `<div class="card-social-metrics" aria-label="직접 기록한 성과"><span>${m.views===null?'조회 —':'조회 '+socialCountText(m.views)}</span><span>${m.likes===null?'좋아요 —':'좋아요 '+socialCountText(m.likes)}</span></div>`;
+  if(m.views===null && m.likes===null && m.comments===null)return '';
+  return `<div class="card-social-metrics" aria-label="직접 기록한 성과"><span>${m.views===null?'조회 —':'조회 '+socialCountText(m.views)}</span><span>${m.likes===null?'좋아요 —':'좋아요 '+socialCountText(m.likes)}</span><span>${m.comments===null?'댓글 —':'댓글 '+socialCountText(m.comments)}</span></div>`;
 }
 
 function normalizeItem(raw={}){
@@ -2066,7 +2070,7 @@ function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes','add-views','add-likes'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes','add-views','add-likes','add-comments'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
