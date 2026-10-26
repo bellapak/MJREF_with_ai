@@ -829,34 +829,6 @@ async function uploadDataFile(){
 // 새로고침 전후 모두 로컬 IndexedDB에서 원본 파일을 복구해 Drive에 저장합니다.
 // 기존에 성공한 슬라이드는 재업로드하지 않으므로 부분 실패 뒤 재시도가 가능합니다.
 let driveSaveBusy=false;
-// Apps Script가 완료한 영상 AI 결과를 로컬의 오래된 queued 데이터로 덮어쓰지 않도록 보호.
-async function preventOverwritingRemoteVideoAnalysis(){
-  const queued=items.filter(x=>x.type==='video' && x.videoAnalysis?.status==='queued');
-  if(!queued.length || !gdriveDataFileId)return;
-  const remote=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveDataFileId}?alt=media`)).json();
-  const cloudItems=new Map((Array.isArray(remote.items)?remote.items:[]).map(x=>[x.id,x]));
-  for(const it of queued){
-    const cloud=cloudItems.get(it.id)?.videoAnalysis;
-    if(cloud && cloud.requestedAt===it.videoAnalysis.requestedAt && (cloud.status==='done'||cloud.status==='error')){
-      throw new Error(`「${it.title||'영상'}」의 AI 결과가 Drive에 있습니다. 영상 카드의 '결과 가져오기'를 먼저 눌러주세요.`);
-    }
-  }
-}
-let videoAnalysisFrameFolderId=null;
-async function ensureVideoAnalysisFrameFolder(){
-  if(videoAnalysisFrameFolderId)return videoAnalysisFrameFolderId;
-  const root=await ensureDriveFolder();
-  let folder=await findDriveFile('video-analysis-frames','application/vnd.google-apps.folder',root);
-  if(!folder){
-    folder=await (await driveFetch('https://www.googleapis.com/drive/v3/files?fields=id,name',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:'video-analysis-frames',mimeType:'application/vnd.google-apps.folder',parents:[root]})
-    })).json();
-  }
-  videoAnalysisFrameFolderId=folder.id;
-  return videoAnalysisFrameFolderId;
-}
-
 async function saveToDrive(silent=false){
   if(driveSaveBusy){if(!silent)showToast('Google Drive에 저장 중입니다.','');return false;}
   driveSaveBusy=true;
@@ -877,21 +849,13 @@ async function saveToDrive(silent=false){
             pending.push({media:slide,label:`${it.title||'캐러셀'} (${index+1}/${it.carousel.length})`});
         });
       }
-      // 영상 분석 프레임은 에셋 목록과 분리된 전용 폴더에 저장합니다.
-      if(it.type==='video' && it.videoAnalysis?.mode==='frames' && it.videoAnalysis.status==='queued'){
-        it.videoAnalysis.frames.forEach((frame,index)=>{
-          if(!frame.driveFileId && frame.localBlobKey)
-            pending.push({media:frame,label:`${it.title||'영상'} 대표 프레임 ${index+1}/${it.videoAnalysis.frames.length}`,analysisFrame:true});
-        });
-      }
     });
 
-    for(const {media,label,analysisFrame=false} of pending){
+    for(const {media,label} of pending){
       currentMedia=label;
       const blob=media._file||await getLocalBlob(media.localBlobKey);
       if(!blob)throw new Error(`${label}: 브라우저에 원본 파일이 없습니다. 이미지 원본을 다시 첨부해 주세요.`);
-      const folderId=analysisFrame?await ensureVideoAnalysisFrameFolder():null;
-      const f=await uploadBlobToDrive(blob,media.fileName||label,media.mimeType||blob.type||'application/octet-stream',folderId);
+      const f=await uploadBlobToDrive(blob,media.fileName||label,media.mimeType||blob.type||'application/octet-stream');
       media.driveFileId=f.id;
       media.mimeType=f.mimeType||media.mimeType;
       media.thumbnailLink=f.thumbnailLink||media.thumbnailLink||'';
@@ -908,16 +872,10 @@ async function saveToDrive(silent=false){
       if(it.type==='carousel') (it.carousel||[]).forEach(slide=>{
         if(slide.localBlobKey&&!slide.driveFileId)missing.push(slide.fileName||slide.id);
       });
-      if(it.type==='video' && it.videoAnalysis?.mode==='frames' && it.videoAnalysis.status==='queued'){
-        (it.videoAnalysis.frames||[]).forEach(frame=>{
-          if(!frame.driveFileId)missing.push(frame.fileName||'영상 대표 프레임');
-        });
-      }
     });
     if(missing.length)throw new Error(`업로드하지 못한 이미지 ${missing.length}개가 있습니다. (${missing[0]})`);
 
     currentMedia='레퍼런스 목록(JSON)';
-    await preventOverwritingRemoteVideoAnalysis();
     await uploadDataFile();
     // 매체 및 JSON이 Drive에 안전하게 업로드된 다음에만 삭제 예약을 처리합니다.
     const pendingDeleteIds=[...getDeletedDriveIds()];
@@ -2446,7 +2404,7 @@ function renderDetail(){
     <div class="form-row"><label class="form-label">제목</label><input class="detail-input" id="detail-edit-title" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
     ${socialMetricInputsHTML('detail',it.socialMetrics)}
-    ${it.type==='video'?videoAnalysisPanelHTML(it):''}
+    ${it.type==='video'?'<p class="detail-helper">영상은 아래 콘텐츠 분석 분야 및 태그를 직접 선택한 뒤 <b>수정 저장</b>을 눌러주세요.</p>':''}
     <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
     <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
     <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="5">${esc(it.notes||'')}</textarea></div>
@@ -2487,191 +2445,6 @@ function saveDetailEdits(){
 
 
 
-// ─── MJREF Video AI workflow: local frames -> manual Drive upload -> Apps Script Gemini -> merge results ───
-let mjrefVideoPreparing=false;
-let mjrefVideoSyncBusy=false;
-const MJREF_VIDEO_FRAME_COUNT=6;
-const MJREF_FULL_VIDEO_MAX=12*1024*1024; // Apps Script inline request + base64 headroom
-const MJREF_GEMINI_PRICE_INPUT=0.30;  // Gemini 3.5 Flash-Lite paid standard USD/1M
-const MJREF_GEMINI_PRICE_OUTPUT=2.50;
-function videoAnalysisPanelHTML(it){
-  const a=it.videoAnalysis||null;
-  const status=a?.status==='done'?'자동 태그 완료':a?.status==='queued'?'태그 분류 대기':a?.status==='error'?'태그 분류 오류':'분류 전';
-  const mode=a?.mode==='full'?'영상·음성 정밀 분석':'대표 프레임 6장';
-  const tags=videoAiFilteredSuggestions(a?.result?.suggestedFacets);
-  const count=Object.values(tags).reduce((n,vals)=>n+vals.length,0);
-  const existingCount=Object.entries(it.facets||{}).reduce((n,[k,vals])=>n+(MJREF_VIDEO_AUTO_TAG_KEYS.includes(k)&&Array.isArray(vals)?vals.length:0),0);
-  const guide=a?.status==='error' && /blob\.getSize is not a function/i.test(a.error||'')
-    ?'VideoAnalysis.gs를 교체한 뒤 Apps Script에서 다시 실행하면 저장된 프레임을 재사용합니다.'
-    :a?.error||'';
-  return `<section class="video-ai-box" aria-label="영상 자동 태그">
-    <div class="video-ai-heading"><strong>AI 영상 자동 태그</strong><span class="video-ai-state">${esc(status)}</span></div>
-    <p class="video-ai-description">분석 설명문을 만들지 않고 기존 MJREF 필터에 태그를 직접 기록합니다. 태그는 기존 수동 분류와 합쳐지며 삭제되지 않습니다.</p>
-    <div class="video-ai-modes"><label><input type="radio" name="video-ai-mode" value="frames" ${a?.mode!=='full'?'checked':''}> <b>빠른 분류</b><small>대표 프레임 6장 · 음성 제외</small></label><label><input type="radio" name="video-ai-mode" value="full" ${a?.mode==='full'?'checked':''}> <b>정밀 분류</b><small>영상 + 음성 · 최대 12MB</small></label></div>
-    <button type="button" class="detail-btn primary video-ai-main" id="video-ai-prepare" onclick="prepareVideoAnalysis()">${a?.status==='done'?'새 분석 준비':'영상 태그 분석 준비'}</button>
-    ${a?.status==='error'||(a?.status==='done'&&count===0)?'<button type="button" class="detail-btn" onclick="retryVideoAutoTags()">저장된 자료로 태그 재분류</button>':''}
-    <p class="video-ai-guide">분석 준비 → <b>Drive에 저장</b> → Apps Script에서 <code>mjrefAnalyzePendingVideos</code> 실행. 완료된 태그는 Drive 데이터에 자동 기록됩니다.</p>
-    <div class="video-ai-actions"><button type="button" class="detail-btn" onclick="openAiScriptConsole()">Apps Script 열기 ↗</button><button type="button" class="detail-btn" id="video-ai-sync" onclick="pullVideoAnalysisResults()">태그 동기화 ↻</button></div>
-    <p id="video-ai-message" class="video-ai-message">${esc(guide||(a?.status==='queued'?'Drive에 저장 후 Apps Script를 실행하세요. 태그가 준비되면 이 화면에서 자동으로 확인합니다.':a?.status==='done'?`자동 분류 태그 ${count}개 · 현재 저장된 분류 ${existingCount}개`:'필요할 때만 분석을 실행합니다. 업로드만으로 크레딧을 사용하지 않습니다.'))}</p>
-    ${a?.status==='done'&&count?`<div class="mini-pill-row">${Object.entries(tags).flatMap(([key,vals])=>vals.map(v=>`<span class="mini-pill" title="${esc(FACET_NAMES[key]||key)}">${esc(v)}</span>`)).join('')}</div>`:''}
-  </section>`;
-}
-// Never accept AI-created taxonomy values or unknown classification keys.
-const MJREF_VIDEO_AUTO_TAG_KEYS=["contentArea","objective","contentRole","contentFormat","tone","channel","industry","strategy","journey","offer","narrative","creatorType","partnership","creatorFormat","trustSignal","audienceRelation","socialMechanic","brandAsset","editorialType","experienceType","cultureFocus","color","visual","cta"];
-function videoAiFilteredSuggestions(raw){
-  const cleaned={};
-  if(!raw||typeof raw!=='object'||Array.isArray(raw))return cleaned;
-  for(const key of MJREF_VIDEO_AUTO_TAG_KEYS){
-    const arr=Array.isArray(raw[key])?raw[key]:typeof raw[key]==='string'?[raw[key]]:[];
-    const valid=[...new Set(arr.filter(v=>typeof v==='string'&&FACETS[key]?.includes(v)))].slice(0,4);
-    if(valid.length)cleaned[key]=valid;
-  }
-  return cleaned;
-}
-function mergeVideoAutoTags(it,raw){
-  const tags=videoAiFilteredSuggestions(raw);
-  const current=cleanFacets(it.facets);
-  let added=0;
-  for(const [key,vals] of Object.entries(tags))for(const value of vals){
-    if(!current[key].includes(value)){current[key].push(value);added++;}
-  }
-  it.facets={...current,hex:it.facets?.hex||''};
-  return added;
-}
-function videoAiMessage(msg,kind=''){
-  const el=$('video-ai-message');if(el){el.textContent=msg;el.dataset.status=kind;}
-}
-function waitVideoEvent(video,event,timeoutMs=20000){
-  return new Promise((resolve,reject)=>{
-    let timer;
-    const cleanup=()=>{clearTimeout(timer);video.removeEventListener(event,onEvent);video.removeEventListener('error',onError);};
-    const onEvent=()=>{cleanup();resolve();};
-    const onError=()=>{cleanup();reject(new Error('영상을 브라우저에서 열 수 없습니다. 지원하는 MP4 또는 WebM인지 확인하세요.'));};
-    video.addEventListener(event,onEvent,{once:true});video.addEventListener('error',onError,{once:true});
-    timer=setTimeout(()=>{cleanup();reject(new Error('영상 프레임 처리 시간 초과'));},timeoutMs);
-  });
-}
-async function extractVideoRepresentativeFrames(blob,count=MJREF_VIDEO_FRAME_COUNT){
-  const url=URL.createObjectURL(blob),video=document.createElement('video');
-  video.preload='auto';video.muted=true;video.playsInline=true;
-  try{
-    const loaded=waitVideoEvent(video,'loadedmetadata');video.src=url;await loaded;
-    if(!Number.isFinite(video.duration)||video.duration<=0)throw new Error('영상 길이를 확인할 수 없습니다.');
-    const duration=video.duration;
-    const ratio=Math.min(1,512/Math.max(video.videoWidth,video.videoHeight,1));
-    const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(video.videoWidth*ratio));canvas.height=Math.max(1,Math.round(video.videoHeight*ratio));
-    const ctx=canvas.getContext('2d');if(!ctx)throw new Error('프레임 캔버스를 초기화할 수 없습니다.');
-    const frames=[];
-    for(let i=0;i<count;i++){
-      const sec=Math.min(Math.max(0,duration-0.04),Math.max(0.01,duration*(i+0.5)/count));
-      if(Math.abs(video.currentTime-sec)>0.04){const seeked=waitVideoEvent(video,'seeked');video.currentTime=sec;await seeked;}
-      ctx.drawImage(video,0,0,canvas.width,canvas.height);
-      const imageBlob=await new Promise((res,rej)=>canvas.toBlob(x=>x?res(x):rej(new Error('대표 프레임을 생성하지 못했습니다.')),'image/jpeg',0.72));
-      frames.push({timeSec:Math.round(sec*10)/10,blob:imageBlob});
-    }
-    return frames;
-  }finally{video.pause();video.removeAttribute('src');video.load();URL.revokeObjectURL(url);}
-}
-async function getLocalVideoAnalysisBlob(it){
-  if(it._file)return it._file;
-  if(it.localBlobKey){const blob=await getLocalBlob(it.localBlobKey);if(blob)return blob;}
-  if(it.driveFileId)return await getDriveBlob(it.driveFileId,it.mimeType||'video/mp4',true);
-  if(it.src&&/^https?:/i.test(it.src)){
-    const resp=await fetch(it.src,{mode:'cors'});
-    if(!resp.ok)throw new Error(`원본 영상 요청 실패 (${resp.status})`);
-    return resp.blob();
-  }
-  throw new Error('영상 원본을 읽을 수 없습니다. Drive에 저장한 영상이나 로컬 원본이 필요합니다.');
-}
-async function saveVideoFrameStrict(key,blob,meta={}){
-  const db=await openLocalBlobDb();
-  return new Promise((resolve,reject)=>{
-    const tx=db.transaction(LOCAL_MEDIA_STORE_NAME,'readwrite');
-    tx.objectStore(LOCAL_MEDIA_STORE_NAME).put({key,blob,meta,ts:Date.now()});
-    tx.oncomplete=()=>resolve(true);
-    tx.onerror=()=>reject(tx.error||new Error('프레임 로컬 저장 실패'));
-    tx.onabort=()=>reject(tx.error||new Error('프레임 저장이 중단되었습니다.'));
-  });
-}
-async function prepareVideoAnalysis(){
-  const it=items.find(x=>x.id===selectedId);if(!it||it.type!=='video'||mjrefVideoPreparing)return;
-  if(it.videoAnalysis?.status==='done'&&!confirm('기존 영상 분석 결과를 새 요청으로 교체할까요? 새 분석에는 API 사용료가 발생할 수 있습니다.'))return;
-  const mode=document.querySelector('input[name="video-ai-mode"]:checked')?.value==='full'?'full':'frames';
-  mjrefVideoPreparing=true;
-  const button=$('video-ai-prepare');if(button)button.disabled=true;
-  videoAiMessage(mode==='frames'?'대표 프레임을 추출하고 로컬에 보관하고 있습니다…':'영상 파일 크기를 확인하는 중입니다…');
-  try{
-    const blob=await getLocalVideoAnalysisBlob(it);
-    if(mode==='full'&&blob.size>MJREF_FULL_VIDEO_MAX)throw new Error(`원본 ${(blob.size/1024/1024).toFixed(1)}MB: 정밀 분석은 12MB 이하만 지원합니다. 빠른 분석을 이용해 주세요.`);
-    let frames=[];
-    const stamp=new Date().toISOString();
-    if(mode==='frames'){
-      const extracted=await extractVideoRepresentativeFrames(blob,6);
-      for(let i=0;i<extracted.length;i++){
-        const key=`mjref-ai-frame:${it.id}:${Date.now()}:${i}`;
-        await saveVideoFrameStrict(key,extracted[i].blob,{sourceVideoId:it.id,timeSec:extracted[i].timeSec});
-        frames.push({timeSec:extracted[i].timeSec,localBlobKey:key,driveFileId:'',fileName:`mjref-${it.id}-frame-${i+1}.jpg`});
-      }
-    }
-    it.videoAnalysis={mode,status:'queued',requestedAt:stamp,analyzedAt:'',model:'',frames,result:null,usage:null,error:''};
-    await saveData();
-    renderDetail();
-    videoAiMessage('분석 요청이 준비됐습니다. Drive에 저장 → Apps Script 함수 실행 → 결과 가져오기 순서로 진행하세요.');
-    showToast('AI 분석 요청 준비 완료 · Drive 수동 저장 필요','success');
-  }catch(e){console.error('video analysis prepare',e);videoAiMessage(e.message||'분석 요청 준비 실패','error');showToast(e.message||'분석 준비 오류','error');}
-  finally{mjrefVideoPreparing=false;if(button&&button.isConnected)button.disabled=false;}
-}
-async function pullVideoAnalysisResults({silent=false}={}){
-  const it=items.find(x=>x.id===selectedId);if(!it||it.type!=='video'||mjrefVideoSyncBusy)return;
-  if(!it.videoAnalysis?.requestedAt){if(!silent)videoAiMessage('먼저 태그 분석을 준비하세요.');return;}
-  mjrefVideoSyncBusy=true;const button=$('video-ai-sync');if(button)button.disabled=true;
-  if(!silent)videoAiMessage('Drive에서 이 영상의 분류 태그를 확인하는 중입니다…');
-  try{
-    await ensureDriveToken();await ensureDriveFolder();
-    if(!gdriveDataFileId)throw new Error('Drive 데이터 파일이 없습니다. 먼저 Drive에 저장하세요.');
-    const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveDataFileId}?alt=media`)).json();
-    const remote=(data.items||[]).find(x=>x.id===it.id);
-    const analysis=remote?.videoAnalysis;
-    if(!analysis)throw new Error('Drive에 이 영상의 분석 요청이 없습니다.');
-    if(analysis.requestedAt!==it.videoAnalysis.requestedAt)throw new Error('로컬과 Drive의 분석 요청 버전이 달라 자동 병합하지 않았습니다.');
-    if(analysis.status==='queued'){
-      if(!silent)videoAiMessage('아직 분류 대기 중입니다. Apps Script에서 mjrefAnalyzePendingVideos를 실행하세요.');
-      return;
-    }
-    if(analysis.status!=='done'&&analysis.status!=='error')throw new Error('알 수 없는 분석 상태입니다.');
-    it.videoAnalysis=normalizeVideoAnalysis(analysis);
-    const applied=analysis.status==='done'?mergeVideoAutoTags(it,analysis.result?.suggestedFacets):0;
-    // Only update this item in browser storage; never overwrite other local edits with the remote Drive JSON.
-    saveLocal();
-    renderFacetFilters();renderBoard();updateAiClassificationStats();
-    // Auto refresh must not erase a user's unsaved edits in the open detail editor.
-    if(!silent)renderDetail();
-    else {
-      // Refresh only the video tag box, leaving title, metrics, memo and facet drafts untouched.
-      const box=$('detail-fields')?.querySelector('.video-ai-box');
-      if(box)box.outerHTML=videoAnalysisPanelHTML(it);
-    }
-    if(analysis.status==='error')videoAiMessage(`분류 실패: ${analysis.error||'Apps Script 실행 로그를 확인하세요.'}`,'error');
-    else if(!silent)showToast(`영상 태그 동기화 완료 · 새 태그 ${applied}개 · Drive에는 이미 적용됨`,'success');
-  }catch(e){
-    console.error('video auto tags sync',e);
-    if(!silent)videoAiMessage(e.message||'태그 동기화 실패','error');
-  }finally{mjrefVideoSyncBusy=false;if(button&&button.isConnected)button.disabled=false;}
-}
-async function retryVideoAutoTags(){
-  const it=items.find(x=>x.id===selectedId);
-  if(!it||it.type!=='video'||!it.videoAnalysis)return;
-  const a=it.videoAnalysis;
-  const frameReady=a.mode==='frames'&&Array.isArray(a.frames)&&a.frames.length===6&&a.frames.every(f=>f.driveFileId);
-  const fullReady=a.mode==='full'&&!!it.driveFileId;
-  if(!frameReady&&!fullReady){
-    videoAiMessage(a.mode==='full'?'Drive에 저장된 원본 영상을 찾지 못했습니다. 빠른 분류를 새로 준비하세요.':'Drive에 저장된 프레임 6장이 없어 빠른 분류를 새로 준비해야 합니다.','error');return;
-  }
-  if(!confirm('기존 자료를 재사용해 태그 분류를 다시 요청할까요? Gemini API 사용량이 추가로 발생할 수 있습니다.'))return;
-  a.status='queued';a.requestedAt=new Date().toISOString();a.error='';a.result=null;a.tagging=null;
-  await saveData();renderDetail();
-  showToast('태그 재분류 대기 등록 · Drive에 저장 후 Apps Script 실행','success');
-}
 // GitHub Pages 단독 배포: 모든 분류는 브라우저에서 수동으로 저장합니다.
 // 기존 브라우저에 남아 있을 수 있는 AI 연동 키만 삭제합니다.
 function clearLegacyBrowserApiKeys(){
@@ -2679,16 +2452,6 @@ function clearLegacyBrowserApiKeys(){
 }
 
 // ─── Initialization ───
-// While the user views a queued video, quietly import finished tags from Drive.
-// No Gemini API is called by this polling loop, and no Drive writes are made.
-setInterval(()=>{
-  const it=items.find(x=>x.id===selectedId);
-  if(!it||it.type!=='video'||it.videoAnalysis?.status!=='queued')return;
-  if(isManualDrivePending()||driveSaveBusy||mjrefVideoSyncBusy)return;
-  if(!(gdriveToken||restoreCachedDriveToken()))return;
-  pullVideoAnalysisResults({silent:true});
-},20000);
-
 window.addEventListener('DOMContentLoaded',()=>{
   let cachedToken='';
   try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
