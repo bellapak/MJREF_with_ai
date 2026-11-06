@@ -2408,8 +2408,9 @@ function renderDetail(){
     <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
     <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
     <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="5">${esc(it.notes||'')}</textarea></div>
+    <p class="detail-helper">입력칸·분류 태그: Enter로 수정 저장 · 메모: Enter로 줄바꿈, Ctrl/⌘ + Enter로 저장</p>
     <div class="detail-actions">
-      <button class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
+      <button id="detail-save-btn" type="button" class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
       ${isDownloadableItem(it)?'<button class="detail-btn" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}
       <button class="detail-btn" onclick="renderDetail()">되돌리기</button>
       <button class="detail-btn" style="color:var(--red)" onclick="deleteItem(selectedId)">삭제</button>
@@ -2419,9 +2420,24 @@ function renderDetail(){
     <div class="detail-field"><div class="detail-key">DRIVE FILE ID</div><div class="detail-val">${esc(it.driveFileId||'-')}</div></div>
   `;
   mountCarouselDetailMedia(it);
-  // 제목 입력 필드에서 엔터 → 저장
-  const titleInp=$('detail-edit-title');
-  if(titleInp) titleInp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();saveDetailEdits();} });
+}
+
+// 상세 패널의 입력칸과 분류 태그는 Enter 한 번으로 기존 '수정 저장' 버튼을 실행합니다.
+// 메모는 Enter 줄바꿈을 보존하고 Ctrl/⌘+Enter만 저장합니다.
+// 한글 조합(IME) 확정 Enter, 다른 버튼/링크의 기본 키보드 동작은 가로채지 않습니다.
+const detailImeFinishedAt=new WeakMap();
+function handleDetailSaveKeydown(event){
+  if(event.key!=='Enter'||event.defaultPrevented||event.repeat||event.isComposing||event.keyCode===229)return;
+  if(!selectedId||!$('detail-panel')?.classList.contains('open'))return;
+  const target=event.target;
+  if(!target||typeof target.matches!=='function')return;
+  if(target.closest('button, a, select, summary, [contenteditable="true"], [role="button"], [role="link"]'))return;
+  if(!target.matches('input, textarea'))return;
+  if(Date.now()-(detailImeFinishedAt.get(target)||0)<120)return;
+  if(event.altKey||(event.shiftKey&&!event.ctrlKey&&!event.metaKey))return;
+  if(target.matches('textarea')&&!event.ctrlKey&&!event.metaKey)return;
+  event.preventDefault();
+  $('detail-save-btn')?.click();
 }
 
 function saveDetailEdits(){
@@ -2470,6 +2486,12 @@ window.addEventListener('DOMContentLoaded',()=>{
   if(filledFromTitles)saveLocal();
   renderFacetFilters();
   renderAll();
+  // renderDetail()은 필드 DOM을 다시 생성하므로 고정 컨테이너에 한 번만 위임 등록합니다.
+  const detailFields=$('detail-fields');
+  detailFields?.addEventListener('compositionend',event=>{
+    if(event.target && typeof event.target==='object') detailImeFinishedAt.set(event.target,Date.now());
+  });
+  detailFields?.addEventListener('keydown',handleDetailSaveKeydown);
   document.addEventListener('keydown',event=>{
     const tag=event.target?.tagName?.toLowerCase();
     if(event.key==='/'&&!event.ctrlKey&&!event.metaKey&&!['input','textarea','select'].includes(tag)){
