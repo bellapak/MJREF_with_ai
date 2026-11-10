@@ -246,6 +246,10 @@ const MANUAL_DRIVE_DIRTY_KEY='refboard_manual_drive_pending_v1';
 let groups=[];
 let categories=[];
 let items=[];
+let copyNotes=[];
+let copyEditingId=null;
+let copyDriveLoading=false;
+let collectionPage="references";
 let currentFilter='all';
 let currentCatFilter=null;
 let currentSort='newest';
@@ -497,6 +501,7 @@ function loadLocal(){
     groups=Array.isArray(raw.groups)?raw.groups:[];
     categories=Array.isArray(raw.categories)?raw.categories:[];
     items=Array.isArray(raw.items)?raw.items.map(normalizeItem):[];
+    copyNotes=normalizeCopyNotes(raw.copyNotes);
     state={groups,categories,items};
   }catch(e){ console.warn(e); }
 }
@@ -510,7 +515,7 @@ function makePersistableState(){
     return o;
   };
   normalizeCategoryGroups();
-  return {groups,categories,items:items.map(cleanItem)};
+  return {groups,categories,items:items.map(cleanItem),copyNotes:copyNotes.map(note=>({...note}))};
 }
 
 function saveLocal(){
@@ -830,7 +835,7 @@ async function uploadDataFile(){
 // 기존에 성공한 슬라이드는 재업로드하지 않으므로 부분 실패 뒤 재시도가 가능합니다.
 let driveSaveBusy=false;
 async function saveToDrive(silent=false){
-  if(driveSaveBusy){if(!silent)showToast('Google Drive에 저장 중입니다.','');return false;}
+  if(driveSaveBusy||copyDriveLoading){if(!silent)showToast('Google Drive에 저장 중입니다.','');return false;}
   driveSaveBusy=true;
   let currentMedia='';
   let completed=0;
@@ -982,7 +987,12 @@ async function syncItemsWithDriveAssets(){
 
 async function loadFromDrive(){
   if(isManualDrivePending() && !confirm('Drive에 저장되지 않은 로컬 변경사항이 있습니다.\nDrive 데이터를 불러오면 로컬 변경사항이 사라질 수 있습니다. 계속할까요?')) return false;
+  if(!confirmCopyDraftDiscard()) return false;
   const previousPendingDeletes=getDeletedDriveIds();
+  if(copyDriveLoading||driveSaveBusy){showToast('Drive 작업이 진행 중입니다.','error');return false;}
+  copyDriveLoading=true;
+  const previousCopies=copyNotes.map(note=>({...note}));
+  let legacyCopiesKept=false;
   try{
     // 명시적으로 불러오기를 선택한 경우 로컬 삭제 예약은 임시 해제합니다.
     // 불러오기 실패 시 기존 삭제 예약을 복원합니다.
@@ -996,18 +1006,22 @@ async function loadFromDrive(){
       groups=Array.isArray(data.groups)?data.groups:[];
       categories=Array.isArray(data.categories)?data.categories:[];
       items=Array.isArray(data.items)?data.items.map(normalizeItem):[];
-    }else{ groups=[]; categories=[]; items=[]; }
+      if(Array.isArray(data.copyNotes)) copyNotes=normalizeCopyNotes(data.copyNotes);
+      else legacyCopiesKept=copyNotes.length>0; // 구버전 Drive 파일은 로컬 카피를 지우지 않는다.
+    }else{ groups=[]; categories=[]; items=[]; legacyCopiesKept=copyNotes.length>0; }
     items=items.filter(it=>!collectDriveIdsFromItem(it).some(id=>deleted.has(id)));
     const sync=await syncItemsWithDriveAssets();
     normalizeCategoryGroups();
     ensureDefaultTaxonomy();
     saveLocal();
     persistDeletedDriveIds(new Set());
-    setManualDrivePending(false);
+    setManualDrivePending(legacyCopiesKept);
+    resetCopyForm();
     renderAll();
+    if(legacyCopiesKept) $('copy-form-status').textContent='기존 Drive 파일에 카피 항목이 없어 로컬 카피를 유지했습니다. Drive에 저장해 주세요.';
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;
-  }catch(e){ console.error(e); persistDeletedDriveIds(previousPendingDeletes); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }
+  }catch(e){ copyNotes=previousCopies; renderCopies(); console.error(e); persistDeletedDriveIds(previousPendingDeletes); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }finally{copyDriveLoading=false;}
 }
 
 // Google Apps Script performs analysis independently. This static site only imports its Drive results.
@@ -1601,6 +1615,7 @@ function bindDriveMediaRemote(el,it,placeholder=''){
 // ─── UI & Rendering ───
 function renderAll(){
   renderFacetFilters();
+  renderCopies();
   renderBoard();
   updateDriveUi();
   updateAiClassificationStats();
@@ -2473,6 +2488,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   try{ cachedToken=restoreCachedDriveToken(); }catch(e){ console.warn(e); }
   clearLegacyBrowserApiKeys();
   loadLocal();
+  initCopyCollection();
   normalizeCategoryGroups();
   const taxonomyMigrated=ensureDefaultTaxonomy();
   installReliablePasteListener();
@@ -2495,7 +2511,7 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('keydown',event=>{
     const tag=event.target?.tagName?.toLowerCase();
     if(event.key==='/'&&!event.ctrlKey&&!event.metaKey&&!['input','textarea','select'].includes(tag)){
-      event.preventDefault();$('search-input')?.focus();
+      event.preventDefault();$(collectionPage==='copies'?'copy-search':'search-input')?.focus();
     }
     if(event.key==='Escape'&&document.activeElement?.id==='search-input')document.activeElement.blur();
   });
@@ -2514,3 +2530,116 @@ window.addEventListener('DOMContentLoaded',()=>{
     });
   }
 });
+
+// ─── 카피 모음: 미디어 items와 분리, 기존 로컬/Drive JSON에 함께 저장 ───
+function normalizeCopyNotes(value){
+  if(!Array.isArray(value)) return [];
+  const seen=new Set();
+  return value.filter(n=>n&&typeof n==='object'&&typeof n.text==='string'&&n.text.trim()).map(n=>{
+    let id=typeof n.id==='string'&&n.id?n.id:uid();
+    if(seen.has(id)) id=uid(); seen.add(id);
+    return {...n,id,text:n.text,reason:typeof n.reason==='string'?n.reason:'',
+      createdAt:Number.isFinite(n.createdAt)?n.createdAt:0,
+      updatedAt:Number.isFinite(n.updatedAt)?n.updatedAt:0};
+  });
+}
+function setCollectionPage(page){
+  collectionPage=page==='copies'?'copies':'references';
+  const isCopy=collectionPage==='copies';
+  document.body.classList.toggle('copy-mode',isCopy);
+  $('copy-page').hidden=!isCopy;
+  for(const name of ['references','copies']){
+    const button=$('nav-'+name);
+    if(name===collectionPage)button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  }
+  closeMobileSidebar();
+  if(isCopy){closeDetail();renderCopies();}
+}
+function copyDraftChanged(){
+  const note=copyNotes.find(n=>n.id===copyEditingId);
+  return ($('copy-text')?.value||'')!==(note?.text||'')||($('copy-reason')?.value||'')!==(note?.reason||'');
+}
+function confirmCopyDraftDiscard(){
+  return !copyDraftChanged()||confirm('아직 저장하지 않은 카피 입력 내용이 있습니다. 입력 내용을 버리고 계속할까요?');
+}
+function resetCopyForm(){
+  copyEditingId=null; $('copy-form')?.reset();
+  $('copy-form-title').textContent='카피 수집하기';
+  $('copy-save').textContent='카피 저장'; $('copy-cancel').hidden=true;
+}
+function cancelCopyEdit(){
+  if(!confirmCopyDraftDiscard())return;
+  resetCopyForm();$('copy-form-status').textContent='';
+}
+function commitCopyNotes(next){
+  const previous=copyNotes;copyNotes=next;
+  try{saveLocal();}catch(error){copyNotes=previous;throw error;}
+  setManualDrivePending(true);renderCopies();
+}
+function saveCopyNote(event){
+  event?.preventDefault();
+  if(driveSaveBusy||aiSyncBusy||copyDriveLoading){$('copy-form-status').textContent='Drive 작업이 끝난 후 저장해 주세요.';return;}
+  const text=$('copy-text').value.trim(),reason=$('copy-reason').value.trim();
+  if(!text){$('copy-form-status').textContent='카피 문구를 입력해 주세요.';$('copy-text').focus();return;}
+  const now=Date.now(),existing=copyNotes.find(n=>n.id===copyEditingId);
+  if(copyEditingId&&!existing){$('copy-form-status').textContent='수정할 카피를 찾을 수 없습니다. 목록에서 다시 선택해 주세요.';return;}
+  const note={...(existing||{}),id:existing?.id||uid(),text,reason,createdAt:existing?.createdAt||now,updatedAt:now};
+  try{
+    commitCopyNotes(existing?copyNotes.map(n=>n.id===note.id?note:n):[note,...copyNotes]);
+    resetCopyForm();$('copy-form-status').textContent=existing?'수정 내용을 브라우저에 저장했습니다.':'카피를 브라우저에 저장했습니다.';
+    $('copy-text').focus();
+  }catch(error){$('copy-form-status').textContent='저장하지 못했습니다. 입력 내용은 유지됩니다. 브라우저 저장 공간을 확인해 주세요.';console.error(error);}
+}
+function editCopyNote(id){
+  if(!confirmCopyDraftDiscard())return;
+  const note=copyNotes.find(n=>n.id===id);if(!note)return;
+  copyEditingId=id;$('copy-text').value=note.text;$('copy-reason').value=note.reason;
+  $('copy-form-title').textContent='카피 수정하기';$('copy-save').textContent='수정 저장';$('copy-cancel').hidden=false;
+  $('copy-form-status').textContent='';$('copy-text').focus();$('copy-form').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function deleteCopyNote(id){
+  if(driveSaveBusy||aiSyncBusy||copyDriveLoading){showToast('Drive 작업이 끝난 후 삭제해 주세요.','error');return;}
+  if(!confirm('이 카피를 삭제할까요?'))return;
+  try{commitCopyNotes(copyNotes.filter(n=>n.id!==id));if(copyEditingId===id)resetCopyForm();$('copy-form-status').textContent='카피를 삭제했습니다. Drive에도 반영하려면 상단에서 저장해 주세요.';}
+  catch(error){showToast('삭제 내용을 저장하지 못했습니다.','error');}
+}
+async function copyNoteText(id){
+  const note=copyNotes.find(n=>n.id===id);if(!note)return;
+  try{await navigator.clipboard.writeText(note.text);showToast('카피 문구를 복사했습니다.','success');}
+  catch(error){showToast('복사 권한이 없어 자동 복사하지 못했습니다. 문구를 선택해 복사해 주세요.','error');}
+}
+function renderCopies(){
+  const root=$('copy-list');if(!root)return;
+  $('copy-nav-count').textContent=copyNotes.length;$('copy-total').textContent=copyNotes.length;
+  const query=($('copy-search').value||'').trim().toLocaleLowerCase();
+  const notes=copyNotes.filter(n=>(n.text+' '+n.reason).toLocaleLowerCase().includes(query)).sort((a,b)=>b.createdAt-a.createdAt);
+  root.replaceChildren();
+  if(!notes.length){
+    const empty=document.createElement('div');empty.className='copy-empty';
+    const title=document.createElement('h3');title.textContent=query?'검색한 카피가 없어요':'첫 번째 문장을 모아보세요.';
+    const desc=document.createElement('p');desc.textContent=query?'다른 단어나 좋았던 이유로 검색해 보세요.':'광고에서, 책에서, 일상에서 발견한 좋은 카피를 기록해 두세요.';
+    empty.append(title,desc);root.append(empty);return;
+  }
+  notes.forEach(note=>{
+    const card=document.createElement('article');card.className='copy-card';
+    const top=document.createElement('div');top.className='copy-card-top';
+    const mark=document.createElement('span');mark.className='copy-quote-mark';mark.textContent='“';mark.setAttribute('aria-hidden','true');
+    const date=document.createElement('span');date.textContent=note.createdAt?new Date(note.createdAt).toLocaleDateString('ko-KR'):'';top.append(mark,date);
+    const quote=document.createElement('blockquote');quote.textContent=note.text;
+    const label=document.createElement('h3');label.textContent='좋았던 이유';
+    const reason=document.createElement('p');reason.className='copy-reason';reason.textContent=note.reason||'아직 이유를 적지 않았어요.';
+    const actions=document.createElement('div');actions.className='copy-card-actions';
+    [['문구 복사',()=>copyNoteText(note.id)],['수정',()=>editCopyNote(note.id)],['삭제',()=>deleteCopyNote(note.id)]].forEach(([text,handler])=>{
+      const button=document.createElement('button');button.type='button';button.textContent=text;button.addEventListener('click',handler);actions.append(button);
+    });
+    card.append(top,quote,label,reason,actions);root.append(card);
+  });
+}
+function initCopyCollection(){
+  $('copy-form').addEventListener('submit',saveCopyNote);
+  $('copy-form').addEventListener('keydown',event=>{
+    if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&!event.isComposing&&event.keyCode!==229){event.preventDefault();$('copy-form').requestSubmit();}
+  });
+  window.addEventListener('beforeunload',event=>{if(copyDraftChanged()){event.preventDefault();event.returnValue='';}});
+}

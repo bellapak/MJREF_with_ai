@@ -30,12 +30,16 @@
   <div style="width:1px;height:24px;background:var(--b2);margin:0 4px;"></div>
   <div style="width:1px;height:24px;background:var(--b2);margin:0 4px;"></div>
 
-  <button class="tb-btn primary" onclick="openAddModal()">+ 추가</button>
-  <button class="tb-btn" onclick="document.getElementById('file-input').click()">업로드</button>
+  <nav class="collection-nav" aria-label="아카이브 페이지">
+    <button type="button" id="nav-references" aria-current="page" onclick="setCollectionPage('references')">레퍼런스</button>
+    <button type="button" id="nav-copies" onclick="setCollectionPage('copies')">카피 모음 <span id="copy-nav-count">0</span></button>
+  </nav>
+  <button class="tb-btn primary" data-reference-only onclick="openAddModal()">+ 추가</button>
+  <button class="tb-btn" data-reference-only onclick="document.getElementById('file-input').click()">업로드</button>
   <button class="tb-btn" id="gdrive-connect-btn" onclick="gdriveSignIn()">Google 연결</button>
   <button class="tb-btn primary" id="gdrive-save-btn" onclick="saveToDrive()" title="현재 레퍼런스 변경사항을 Google Drive에 수동 저장합니다">💾 Drive에 저장</button>
   <button class="tb-btn" id="gdrive-load-btn" onclick="loadFromDrive()">Drive 불러오기</button>
-  <button class="tb-btn" id="delete-all-btn" style="color:var(--red);border-color:rgba(255,69,58,.35);" onclick="deleteAllItems()" title="모아둔 레퍼런스를 전체 삭제">전체 삭제</button>
+  <button class="tb-btn" data-reference-only id="delete-all-btn" style="color:var(--red);border-color:rgba(255,69,58,.35);" onclick="deleteAllItems()" title="모아둔 레퍼런스를 전체 삭제">전체 삭제</button>
 
   <input type="file" id="file-input" multiple accept="image/*,video/*" style="display:none" onchange="handleFileInput(event)">
   <!-- Google Drive 상태 표시 -->
@@ -156,6 +160,26 @@
     </div>
 
   </div>
+
+  <section id="copy-page" hidden aria-labelledby="copy-page-title">
+    <header class="copy-page-head"><div class="search-eyebrow">WORDS WORTH KEEPING</div><h1 id="copy-page-title">좋은 카피를, 내 문장 노트에.</h1><p>마음에 남은 한 줄과 그 이유를 함께 모아두세요.</p></header>
+    <div class="copy-layout">
+      <form id="copy-form" class="copy-composer">
+        <div class="copy-form-head"><h2 id="copy-form-title">카피 수집하기</h2><span>두 칸이면 충분해요</span></div>
+        <label for="copy-text">마음에 든 카피 <span class="copy-required">필수</span></label>
+        <textarea id="copy-text" required maxlength="10000" rows="6" placeholder="기억하고 싶은 문구를 적거나 붙여넣으세요."></textarea>
+        <label for="copy-reason">왜 좋았나요? <span>선택</span></label>
+        <textarea id="copy-reason" maxlength="5000" rows="3" placeholder="예: 익숙한 말을 살짝 비틀어서 짧지만 오래 기억에 남았어요."></textarea>
+        <div class="copy-form-actions"><button type="submit" id="copy-save" class="tb-btn primary">카피 저장</button><button type="button" id="copy-cancel" class="tb-btn" hidden onclick="cancelCopyEdit()">수정 취소</button></div>
+        <p class="copy-save-note">⌘ / Ctrl + Enter로 저장 · Enter는 줄바꿈<br>브라우저에 저장됩니다. 다른 기기에서도 보려면 상단 ‘Drive에 저장’을 눌러주세요.</p>
+        <p id="copy-form-status" role="status" aria-live="polite"></p>
+      </form>
+      <div class="copy-library">
+        <div class="copy-list-head"><h2>모아둔 카피 <span id="copy-total">0</span></h2><label class="copy-search"><span class="sr-only">카피와 이유 검색</span><input id="copy-search" type="search" placeholder="카피나 좋았던 이유 검색" oninput="renderCopies()"></label></div>
+        <div id="copy-list" class="copy-list" aria-live="polite"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- DETAIL PANEL -->
   <div id="detail-panel">
