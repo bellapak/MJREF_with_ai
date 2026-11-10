@@ -2532,13 +2532,14 @@ window.addEventListener('DOMContentLoaded',()=>{
 });
 
 // ─── 카피 모음: 미디어 items와 분리, 기존 로컬/Drive JSON에 함께 저장 ───
+let copyLinkedDraft=[];
 function normalizeCopyNotes(value){
   if(!Array.isArray(value)) return [];
   const seen=new Set();
   return value.filter(n=>n&&typeof n==='object'&&typeof n.text==='string'&&n.text.trim()).map(n=>{
     let id=typeof n.id==='string'&&n.id?n.id:uid();
     if(seen.has(id)) id=uid(); seen.add(id);
-    return {...n,id,text:n.text,reason:typeof n.reason==='string'?n.reason:'',
+    return {...n,id,text:n.text,reason:typeof n.reason==='string'?n.reason:'',linkedItemIds:Array.isArray(n.linkedItemIds)?[...new Set(n.linkedItemIds.filter(id=>typeof id==='string'))]:[],
       createdAt:Number.isFinite(n.createdAt)?n.createdAt:0,
       updatedAt:Number.isFinite(n.updatedAt)?n.updatedAt:0};
   });
@@ -2554,17 +2555,17 @@ function setCollectionPage(page){
     else button.removeAttribute('aria-current');
   }
   closeMobileSidebar();
-  if(isCopy){closeDetail();renderCopies();}
+  if(isCopy){closeDetail();renderCopies();renderCopyLinkPicker();}
 }
 function copyDraftChanged(){
   const note=copyNotes.find(n=>n.id===copyEditingId);
-  return ($('copy-text')?.value||'')!==(note?.text||'')||($('copy-reason')?.value||'')!==(note?.reason||'');
+  return ($('copy-text')?.value||'')!==(note?.text||'')||($('copy-reason')?.value||'')!==(note?.reason||'')||JSON.stringify([...copyLinkedDraft].sort())!==JSON.stringify([...(note?.linkedItemIds||[])].sort());
 }
 function confirmCopyDraftDiscard(){
   return !copyDraftChanged()||confirm('아직 저장하지 않은 카피 입력 내용이 있습니다. 입력 내용을 버리고 계속할까요?');
 }
 function resetCopyForm(){
-  copyEditingId=null; $('copy-form')?.reset();
+  copyEditingId=null; copyLinkedDraft=[]; $('copy-form')?.reset();renderCopyLinkPicker();
   $('copy-form-title').textContent='카피 수집하기';
   $('copy-save').textContent='카피 저장'; $('copy-cancel').hidden=true;
 }
@@ -2584,7 +2585,7 @@ function saveCopyNote(event){
   if(!text){$('copy-form-status').textContent='카피 문구를 입력해 주세요.';$('copy-text').focus();return;}
   const now=Date.now(),existing=copyNotes.find(n=>n.id===copyEditingId);
   if(copyEditingId&&!existing){$('copy-form-status').textContent='수정할 카피를 찾을 수 없습니다. 목록에서 다시 선택해 주세요.';return;}
-  const note={...(existing||{}),id:existing?.id||uid(),text,reason,createdAt:existing?.createdAt||now,updatedAt:now};
+  const note={...(existing||{}),id:existing?.id||uid(),text,reason,linkedItemIds:[...copyLinkedDraft],createdAt:existing?.createdAt||now,updatedAt:now};
   try{
     commitCopyNotes(existing?copyNotes.map(n=>n.id===note.id?note:n):[note,...copyNotes]);
     resetCopyForm();$('copy-form-status').textContent=existing?'수정 내용을 브라우저에 저장했습니다.':'카피를 브라우저에 저장했습니다.';
@@ -2594,7 +2595,7 @@ function saveCopyNote(event){
 function editCopyNote(id){
   if(!confirmCopyDraftDiscard())return;
   const note=copyNotes.find(n=>n.id===id);if(!note)return;
-  copyEditingId=id;$('copy-text').value=note.text;$('copy-reason').value=note.reason;
+  copyEditingId=id;copyLinkedDraft=[...(note.linkedItemIds||[])];renderCopyLinkPicker();$('copy-text').value=note.text;$('copy-reason').value=note.reason;
   $('copy-form-title').textContent='카피 수정하기';$('copy-save').textContent='수정 저장';$('copy-cancel').hidden=false;
   $('copy-form-status').textContent='';$('copy-text').focus();$('copy-form').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
@@ -2632,7 +2633,14 @@ function renderCopies(){
     [['문구 복사',()=>copyNoteText(note.id)],['수정',()=>editCopyNote(note.id)],['삭제',()=>deleteCopyNote(note.id)]].forEach(([text,handler])=>{
       const button=document.createElement('button');button.type='button';button.textContent=text;button.addEventListener('click',handler);actions.append(button);
     });
-    card.append(top,quote,label,reason,actions);root.append(card);
+    const links=document.createElement('div');links.className='copy-linked-buttons';
+    (note.linkedItemIds||[]).forEach(id=>{
+      const item=items.find(it=>it.id===id);
+      const button=document.createElement('button');button.type='button';button.className='tb-btn';
+      button.textContent=item?'콘텐츠 보기 · '+(item.title||'제목 없음'):'삭제된 콘텐츠';button.disabled=!item;
+      button.addEventListener('click',()=>openCopyLinkedContent(id));links.append(button);
+    });
+    card.append(top,quote,label,reason,links,actions);root.append(card);
   });
 }
 function initCopyCollection(){
@@ -2641,4 +2649,26 @@ function initCopyCollection(){
     if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)&&!event.isComposing&&event.keyCode!==229){event.preventDefault();$('copy-form').requestSubmit();}
   });
   window.addEventListener('beforeunload',event=>{if(copyDraftChanged()){event.preventDefault();event.returnValue='';}});
+}
+
+function openCopyLinkedContent(id){
+  if(!items.some(item=>item.id===id)){showToast('콘텐츠를 찾을 수 없습니다.','error');return;}
+  setCollectionPage('references');openDetail(id);
+}
+function renderCopyLinkPicker(){
+  const root=$('copy-link-options');if(!root)return;
+  $('copy-linked-count').textContent=copyLinkedDraft.length;root.replaceChildren();
+  const query=($('copy-link-search').value||'').trim().toLocaleLowerCase();
+  const candidates=items.filter(item=>(item.title||'제목 없음').toLocaleLowerCase().includes(query));
+  const missing=copyLinkedDraft.filter(id=>!items.some(item=>item.id===id));
+  [...candidates,...missing.map(id=>({id,title:'삭제된 콘텐츠'}))].forEach(item=>{
+    const label=document.createElement('label');const checkbox=document.createElement('input');
+    checkbox.type='checkbox';checkbox.checked=copyLinkedDraft.includes(item.id);
+    checkbox.addEventListener('change',()=>{
+      copyLinkedDraft=checkbox.checked?[...new Set([...copyLinkedDraft,item.id])]:copyLinkedDraft.filter(id=>id!==item.id);
+      $('copy-linked-count').textContent=copyLinkedDraft.length;
+    });
+    const title=document.createElement('span');title.textContent=item.title||'제목 없음';label.append(checkbox,title);root.append(label);
+  });
+  if(!root.children.length){const empty=document.createElement('p');empty.textContent='콘텐츠가 없습니다.';root.append(empty);}
 }

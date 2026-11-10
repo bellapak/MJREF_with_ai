@@ -170,6 +170,7 @@
         <textarea id="copy-text" required maxlength="10000" rows="6" placeholder="카피 입력"></textarea>
         <label for="copy-reason">왜 좋았나요? <span>선택</span></label>
         <textarea id="copy-reason" maxlength="5000" rows="3" placeholder="좋았던 이유 입력"></textarea>
+        <details class="copy-picker"><summary>콘텐츠 연결 <span id="copy-linked-count">0</span></summary><input id="copy-link-search" type="search" placeholder="콘텐츠 검색" aria-label="연결할 콘텐츠 검색" oninput="renderCopyLinkPicker()"><div id="copy-link-options"></div></details>
         <div class="copy-form-actions"><button type="submit" id="copy-save" class="tb-btn primary">카피 저장</button><button type="button" id="copy-cancel" class="tb-btn" hidden onclick="cancelCopyEdit()">수정 취소</button></div>
         <p id="copy-form-status" role="status" aria-live="polite"></p>
       </form>
