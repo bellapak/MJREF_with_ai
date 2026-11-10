@@ -2617,9 +2617,8 @@ function renderCopies(){
   root.replaceChildren();
   if(!notes.length){
     const empty=document.createElement('div');empty.className='copy-empty';
-    const title=document.createElement('h3');title.textContent=query?'검색한 카피가 없어요':'첫 번째 문장을 모아보세요.';
-    const desc=document.createElement('p');desc.textContent=query?'다른 단어나 좋았던 이유로 검색해 보세요.':'광고에서, 책에서, 일상에서 발견한 좋은 카피를 기록해 두세요.';
-    empty.append(title,desc);root.append(empty);return;
+    const title=document.createElement('h3');title.textContent=query?'검색 결과가 없습니다.':'저장한 카피가 없습니다.';
+    empty.append(title);root.append(empty);return;
   }
   notes.forEach(note=>{
     const card=document.createElement('article');card.className='copy-card';
