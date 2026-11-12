@@ -157,7 +157,7 @@ function renderFacetFilterCollection(rootId,keys){
   const root=$(rootId);if(!root)return;
   const openKeys=new Set([...root.querySelectorAll('details[open]')].map(d=>d.dataset.key));
   root.innerHTML=keys.map(key=>{
-    const values=[...new Set([...FACETS[key],...items.flatMap(it=>it.facets?.[key]||[]).filter(v=>typeof v==='string')])];
+    const values=[...new Set([...FACETS[key],...referenceItems().flatMap(it=>it.facets?.[key]||[]).filter(v=>typeof v==='string')])];
     const groups=FACET_GROUPS[key]||[['',values]];
     const grouped=new Set(groups.flatMap(([,arr])=>arr));
     const extras=values.filter(v=>!grouped.has(v));
@@ -170,8 +170,9 @@ function renderFacetFilterCollection(rootId,keys){
 function renderAreaSelector(){
   const root=$('area-selector');if(!root)return;
   const allActive=activeAreaFilters.size===0;
-  root.innerHTML=`<button type="button" class="area-nav-all${allActive?' is-active':''}" aria-pressed="${allActive}" onclick="clearAreaFilters()"><span>전체 분야</span><small>${items.length}</small></button>`+
-    CONTENT_AREAS.map(a=>{const active=activeAreaFilters.has(a.name);const count=items.filter(it=>(it.facets?.contentArea||[]).includes(a.name)).length;
+  const refs=referenceItems();
+  root.innerHTML=`<button type="button" class="area-nav-all${allActive?' is-active':''}" aria-pressed="${allActive}" onclick="clearAreaFilters()"><span>전체 분야</span><small>${refs.length}</small></button>`+
+    CONTENT_AREAS.map(a=>{const active=activeAreaFilters.has(a.name);const count=refs.filter(it=>(it.facets?.contentArea||[]).includes(a.name)).length;
       return `<button type="button" class="area-nav-item${active?' is-active':''}" aria-pressed="${active}" onclick="toggleAreaFilter('${a.name}')" title="${esc(a.desc)}"><span class="area-nav-code">${a.code}</span><span class="area-nav-name">${esc(a.short)}</span><small>${count}</small></button>`;
     }).join('');
   const desc=$('area-selector-description');
@@ -222,7 +223,7 @@ function renderNavigatorChips(){
 }
 // 동일한 제목을 가진 별도 레퍼런스는 분류 태그만 공유합니다.
 function normalizedReferenceTitle(title){const v=String(title||'').normalize('NFKC').replace(/\s+/g,' ').trim().toLocaleLowerCase();return (!v||['제목없음','untitled','image','붙여넣기 이미지'].includes(v))?'':v;}
-function sameTitleReferences(title,excludeId){const key=normalizedReferenceTitle(title);return key?items.filter(it=>it.id!==excludeId&&normalizedReferenceTitle(it.title)===key):[];}
+function sameTitleReferences(title,excludeId){const key=normalizedReferenceTitle(title);const source=items.find(it=>it.id===excludeId);return key?items.filter(it=>it.id!==excludeId&&normalizedReferenceTitle(it.title)===key&&(!source||isDetailPageItem(it)===isDetailPageItem(source))):[];}
 function isEmptyClassification(facets){return !Object.entries(facets||{}).some(([k,v])=>k!=='hex'&&Array.isArray(v)&&v.length>0)&&!facets?.hex;}
 function matchingClassification(title,excludeId){return sameTitleReferences(title,excludeId).find(it=>!isEmptyClassification(it.facets))?.facets||null;}
 function synchronizeTitleFacets(source){const duplicates=sameTitleReferences(source.title,source.id);for(const item of duplicates)item.facets={...cleanFacets(source.facets),hex:source.facets?.hex||''};return duplicates.length;}
@@ -250,6 +251,7 @@ let copyNotes=[];
 let copyEditingId=null;
 let copyDriveLoading=false;
 let collectionPage="references";
+let modalAddCollection="references";
 let currentFilter='all';
 let currentCatFilter=null;
 let currentSort='newest';
@@ -367,6 +369,50 @@ function socialMetricCardHTML(it){
   return `<div class="card-social-metrics" aria-label="직접 기록한 성과"><span>${m.views===null?'조회 —':'조회 '+socialCountText(m.views)}</span><span>${m.likes===null?'좋아요 —':'좋아요 '+socialCountText(m.likes)}</span><span>${m.comments===null?'댓글 —':'댓글 '+socialCountText(m.comments)}</span></div>`;
 }
 
+
+// ─── 상세페이지 아카이브: 기존 미디어 items를 보존하면서 화면과 분석 분류만 분리 ───
+const PDP_PRODUCT_CATEGORIES=['주방세제','세탁세제','세정·청소용품','생활·위생용품','뷰티·퍼스널케어','식품·음료','리빙·인테리어','패션·잡화','테크·가전','문화·굿즈','기타'];
+const PDP_APPEALS=['세정력·성능','안전성·시험 근거','성분·원료','향·감각 경험','사용 편의성','디자인·패키지','경제성·용량','문제 해결','브랜드 스토리·철학','친환경·지속가능성','후기·사회적 증거','차별화·비교','혜택·가격','인증·수상','기타'];
+const PDP_SECTIONS=['첫 화면·후킹','고객 문제·공감','핵심 혜택·USP','기능·성능 설명','시험·인증·근거','사용 장면·시연','사용법·FAQ','경쟁 제품 비교','브랜드 스토리','리뷰·사회적 증거','혜택·구매 CTA','기타'];
+function normalizeDetailPage(raw={}){
+  const obj=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+  const validArray=v=>Array.isArray(v)?[...new Set(v.filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim()))]:[];
+  return {...obj,
+    productCategory:typeof obj.productCategory==='string'?obj.productCategory:'',
+    appeals:validArray(obj.appeals),
+    sections:validArray(obj.sections),
+    heroCopy:typeof obj.heroCopy==='string'?obj.heroCopy:'',
+    structureNote:typeof obj.structureNote==='string'?obj.structureNote:'',
+    appealEntries:Array.isArray(obj.appealEntries)?obj.appealEntries.filter(e=>e&&typeof e==='object').map(e=>({
+      ...e,id:typeof e.id==='string'&&e.id?e.id:uid('pe'),
+      type:typeof e.type==='string'?e.type:'',
+      copy:typeof e.copy==='string'?e.copy:'',
+      evidence:typeof e.evidence==='string'?e.evidence:''
+    })):[]
+  };
+}
+function isDetailPageItem(it){
+  if(!it)return false;
+  if(it.collectionKind==='detailPage')return true;
+  if(it.collectionKind==='references')return false; // 수동 분류는 레거시 태그보다 우선
+  if((it.facets?.purpose||[]).includes('상세페이지'))return true;
+  if((it.catIds||[]).some(id=>{
+    const c=categories.find(cat=>cat.id===id);
+    return c&&/^(?:상세\s*페이지|pdp|상품\s*상세)$/.test(String(c.name||'').trim().toLowerCase());
+  }))return true;
+  // 제목/파일명에서 '상세페이지'가 명시된 경우에만 자동으로 분리합니다.
+  return /상세\s*페이지|(?:^|[^a-z])pdp(?:[^a-z]|$)|detail[ _-]*page/i.test([it.title,it.fileName].filter(Boolean).join(' '));
+}
+function isDetailPageCandidate(it){
+  if(!it||isDetailPageItem(it)||it.collectionKind==='references')return false;
+  return (it.catIds||[]).some(id=>{
+    const cat=categories.find(c=>c.id===id);
+    return id==='c-ux-page'||cat?.name==='랜딩/상세페이지'||cat?.name==='PDP/상세페이지';
+  });
+}
+function referenceItems(){return items.filter(it=>!isDetailPageItem(it));}
+function detailPageItems(){return items.filter(isDetailPageItem);}
+
 function normalizeItem(raw={}){
   let src=raw.src || raw.url || raw.mediaUrl || '';
   const sourceUrl=raw.sourceUrl || raw.source_url || '';
@@ -379,6 +425,8 @@ function normalizeItem(raw={}){
 
   return {
     id: raw.id || uid(),
+    collectionKind:raw.collectionKind==='detailPage'?'detailPage':(raw.collectionKind==='references'?'references':''),
+    detailPage:raw.detailPage&&typeof raw.detailPage==='object'?normalizeDetailPage(raw.detailPage):null,
     title: first(raw.title, raw.name, raw.filename, '제목없음'),
     type,
     src,
@@ -1504,15 +1552,16 @@ async function deleteItem(id){
 
 // 모아둔 레퍼런스 전체 삭제: 로컬에서만 즉시 삭제하며, Drive 정리는 수동 저장 시점에 실행됩니다.
 async function deleteAllItems(){
-  if(!items.length){ showToast('삭제할 레퍼런스가 없어요','error'); return; }
-  const count=items.length;
+  const refs=referenceItems();
+  if(!refs.length){ showToast('삭제할 레퍼런스가 없어요','error'); return; }
+  const count=refs.length;
   if(!confirm(`정말 전체 ${count}개 레퍼런스를 모두 삭제할까요?\n이 작업은 되돌릴 수 없습니다.`)) return;
 
   const allDriveIds=[];
-  items.forEach(it=>allDriveIds.push(...collectDriveIdsFromItem(it)));
+  refs.forEach(it=>allDriveIds.push(...collectDriveIdsFromItem(it)));
   rememberDeletedDriveIds(allDriveIds);
 
-  items=[];
+  items=items.filter(isDetailPageItem);
   selectedId=null;
   $('detail-panel')?.classList.remove('open');
   saveLocal();
@@ -1617,12 +1666,13 @@ function renderAll(){
   renderFacetFilters();
   renderCopies();
   renderBoard();
+  renderDetailPages();
   updateDriveUi();
   updateAiClassificationStats();
 }
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
 function filteredItems(){
-  let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=[...items];
+  let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=referenceItems();
   if(activeAreaFilters.size)arr=arr.filter(it=>(it.facets?.contentArea||[]).some(v=>activeAreaFilters.has(v)));
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
@@ -1636,7 +1686,8 @@ function filteredItems(){
 
 function renderCounts(){
   const set=(id,n)=>{const el=$(id); if(el) el.textContent=n;};
-  set('cnt-all',items.length); set('cnt-image',items.filter(i=>i.type==='image').length); set('cnt-video',items.filter(i=>i.type==='video').length); set('cnt-carousel',items.filter(i=>i.type==='carousel').length); set('cnt-link',items.filter(i=>i.type==='link').length);
+  const refs=referenceItems();
+  set('cnt-all',refs.length); set('cnt-image',refs.filter(i=>i.type==='image').length); set('cnt-video',refs.filter(i=>i.type==='video').length); set('cnt-carousel',refs.filter(i=>i.type==='carousel').length); set('cnt-link',refs.filter(i=>i.type==='link').length);
 }
 
 function setFilter(f,btn){ currentFilter=f; currentCatFilter=null; document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.remove('active')); btn?.classList.add('active'); renderBoard(); }
@@ -1727,7 +1778,9 @@ function cardNode(it,index=0){
   if(media) { card.appendChild(media); }
 
   const info=document.createElement('div'); info.className='card-info';
-  const tags=PRIMARY_FACET_KEYS.flatMap(k=>(it.facets?.[k]||[]).slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
+  const tags=collectionPage==='detailPages' && isDetailPageItem(it)
+    ? [it.detailPage?.productCategory,...(it.detailPage?.appeals||[]).slice(0,4)].filter(Boolean).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`).join('')
+    : PRIMARY_FACET_KEYS.flatMap(k=>(it.facets?.[k]||[]).slice(0,2).map(v=>`<span class="card-cat-tag">${esc(v)}</span>`)).slice(0,5).join('');
   info.innerHTML=`<div class="card-title-wrap"><div class="card-title">${esc(it.title)}</div><button class="card-title-edit-btn" title="제목 수정">✎</button></div><div class="card-cats">${tags}</div>${socialMetricCardHTML(it)}<div class="card-date">${new Date(it.ts).toLocaleDateString('ko-KR')}</div>`;
   const titleEl=info.querySelector('.card-title');
   const editBtn=info.querySelector('.card-title-edit-btn');
@@ -1753,7 +1806,7 @@ function renderBoard(){
   const frag = document.createDocumentFragment();
   frag.appendChild(pasteBarNode());
   
-  if(items.length===0){ 
+  if(referenceItems().length===0){ 
     frag.appendChild(dropZoneNode()); 
     board.innerHTML=''; 
     board.className=currentView+'-view'; 
@@ -2044,7 +2097,7 @@ function buildGroupedDetailCategoryPickerHtml(selectedIds=[]){
 
 // ─── Modal & File Handling ───
 function renderModalCats(){ const el=$('modal-cat-options'); if(!el)return; el.innerHTML=categories.map(c=>`<span class="mcat-chip ${modalSelectedCats.includes(c.id)?'selected':''}" data-id="${c.id}" style="${modalSelectedCats.includes(c.id)?`background:${c.color};`:''}">${esc(c.name)}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 없음</span>'; el.querySelectorAll('.mcat-chip').forEach(ch=>ch.onclick=()=>{const id=ch.dataset.id; modalSelectedCats=modalSelectedCats.includes(id)?modalSelectedCats.filter(x=>x!==id):[...modalSelectedCats,id]; renderModalCats();}); }
-function openAddModal(){ pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes','add-views','add-likes','add-comments'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
+function openAddModal(){ modalAddCollection=collectionPage==='detailPages'?'detailPages':'references'; if($('add-modal-title'))$('add-modal-title').textContent=modalAddCollection==='detailPages'?'상세페이지 추가':'레퍼런스 추가'; pendingFile=null; pendingCarouselFiles=[]; modalSelectedCats=[]; if($('modal-file-name')) $('modal-file-name').textContent=''; if($('add-title')) $('add-title').value=''; ['add-url','add-brand','add-source-url','add-notes','add-views','add-likes','add-comments'].forEach(id=>{if($(id))$(id).value='';}); renderModalCats();if($('modal-facets'))$('modal-facets').innerHTML=facetFieldsHTML('add',{}); switchModalTab('single'); $('add-modal')?.classList.add('open'); }
 function closeModal(id){ $(id)?.classList.remove('open'); }
 function switchModalTab(mode){ modalMode=mode; $('modal-single-section').style.display=mode==='single'?'block':'none'; $('modal-carousel-section').style.display=mode==='carousel'?'block':'none'; $('modal-tab-single').style.background=mode==='single'?'var(--accent)':'none'; $('modal-tab-single').style.color=mode==='single'?'#fff':'var(--t2)'; $('modal-tab-carousel').style.background=mode==='carousel'?'var(--accent)':'none'; $('modal-tab-carousel').style.color=mode==='carousel'?'#fff':'var(--t2)'; }
 
@@ -2072,7 +2125,7 @@ function handleCarouselFiles(e){ pendingCarouselFiles=[...(e.target.files||[])];
 async function saveFromModal(){
   let socialMetrics;
   try{socialMetrics=collectSocialMetricInputs('add');}catch(error){showToast(error.message,'error');return;}
-  const base={socialMetrics,title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,notes:$('add-notes').value,facets:readFacetFields('add'),ts:Date.now()};
+  const base={socialMetrics,collectionKind:modalAddCollection==='detailPages'?'detailPage':'',detailPage:modalAddCollection==='detailPages'?normalizeDetailPage({}):null,title:$('add-title').value.trim()||'제목없음',catIds:[...modalSelectedCats],platform:$('add-platform').value,brand:$('add-brand').value,sourceType:$('add-source-type').value,sourceUrl:$('add-source-url').value,notes:$('add-notes').value,facets:readFacetFields('add'),ts:Date.now()};
   const url=$('add-url').value.trim();
   if(modalMode==='carousel'){
     if(!pendingCarouselFiles.length){showToast('캐러셀 이미지를 선택해주세요','error');return;}
@@ -2346,12 +2399,12 @@ function mountCarouselDetailMedia(it){
 
 function findBoardCardById(id){
   const safeId=String(id||'');
-  return [...document.querySelectorAll('#board .ref-card')]
+  return [...document.querySelectorAll('#board .ref-card, #pdp-board .ref-card')]
     .find(card=>card.dataset.itemId===safeId)||null;
 }
 
 function openDetail(id){
-  const boardWrap=$('board-wrap');
+  const boardWrap=$(collectionPage==='detailPages'?'pdp-board-scroll':'board-wrap');
   const clickedCard=findBoardCardById(id);
   const anchorTop=clickedCard?.getBoundingClientRect().top ?? null;
   const fallbackScrollTop=boardWrap?.scrollTop ?? 0;
@@ -2380,7 +2433,7 @@ function openDetail(id){
 }
 
 function closeDetail(){
-  const boardWrap=$('board-wrap');
+  const boardWrap=$(collectionPage==='detailPages'?'pdp-board-scroll':'board-wrap');
   const currentCard=selectedId ? findBoardCardById(selectedId) : null;
   const anchorTop=currentCard?.getBoundingClientRect().top ?? null;
   const fallbackScrollTop=boardWrap?.scrollTop ?? 0;
@@ -2413,6 +2466,11 @@ function renderDetail(){
   
   renderDetailCatOptions();
   const f=$('detail-fields'); if(!f) return;
+  if(collectionPage==='detailPages'&&isDetailPageItem(it)){
+    f.innerHTML=detailPageEditorHTML(it);
+    mountCarouselDetailMedia(it);
+    return;
+  }
   f.innerHTML=`
     ${it.type==='carousel'?carouselThumbStrip(it):''}
     <div class="detail-section-title">수정</div>
@@ -2420,12 +2478,13 @@ function renderDetail(){
     <div class="form-row"><label class="form-label">브랜드</label><input class="detail-input" id="detail-edit-brand" value="${esc(it.brand||'')}"></div>
     ${socialMetricInputsHTML('detail',it.socialMetrics)}
     ${it.type==='video'?'<p class="detail-helper">영상은 아래 콘텐츠 분석 분야 및 태그를 직접 선택한 뒤 <b>수정 저장</b>을 눌러주세요.</p>':''}
-    <div class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>
+    <div class="facet-editor" id="detail-facets-block">${facetFieldsHTML('detail',it.facets)}</div>
     <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
     <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="5">${esc(it.notes||'')}</textarea></div>
     <p class="detail-helper">입력칸·분류 태그: Enter로 수정 저장 · 메모: Enter로 줄바꿈, Ctrl/⌘ + Enter로 저장</p>
     <div class="detail-actions">
       <button id="detail-save-btn" type="button" class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button>
+      <button type="button" class="detail-btn" onclick="moveItemCollection(selectedId,'detailPage')">상세페이지로 분류</button>
       ${isDownloadableItem(it)?'<button class="detail-btn" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}
       <button class="detail-btn" onclick="renderDetail()">되돌리기</button>
       <button class="detail-btn" style="color:var(--red)" onclick="deleteItem(selectedId)">삭제</button>
@@ -2458,11 +2517,12 @@ function handleDetailSaveKeydown(event){
 function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   let socialMetrics;
-  try{socialMetrics=collectSocialMetricInputs('detail',it.socialMetrics);}catch(error){showToast(error.message,'error');return;}
+  try{socialMetrics=$('detail-views')?collectSocialMetricInputs('detail',it.socialMetrics):it.socialMetrics;}catch(error){showToast(error.message,'error');return;}
   it.socialMetrics=socialMetrics;
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
-  it.facets=readFacetFields('detail',it.facets);
+  if($('detail-facets-block'))it.facets=readFacetFields('detail',it.facets);
+  if($('pdp-product-category'))it.detailPage=readDetailPageEditorFields(it.detailPage);
   synchronizeTitleFacets(it);
   it.sourceUrl=$('detail-edit-link')?.value||'';
   if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;
@@ -2470,7 +2530,7 @@ function saveDetailEdits(){
   if(!it.driveFileId) it.driveFileId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl)||'';
 
   it.notes=$('detail-edit-notes')?.value||'';
-  saveData(); renderBoard(); renderDetail();
+  saveData(); renderAll(); renderDetail();
   showToast('수정 저장 완료','success');
 }
 
@@ -2481,6 +2541,179 @@ function saveDetailEdits(){
 function clearLegacyBrowserApiKeys(){
   ['refboard_openai_classification_key','refboard_api_key_openai','refboard_openai_key','refboard_classification_gateway_url'].forEach(k=>localStorage.removeItem(k));
 }
+
+
+// ─── 상세페이지 모음: 수집된 원본 그대로, 소구포인트만 구조적으로 기록 ───
+// 원본이 긴 상세페이지 이미지도 글자가 읽히도록 전체 길이로 펼쳐 봅니다.
+function openDetailPagePreview(id){
+  const it=items.find(item=>item.id===id);if(!it)return;
+  if(it.type==='link'){
+    const url=it.sourceUrl||it.src;
+    if(/^https?:\/\//i.test(url))window.open(url,'_blank','noopener,noreferrer');
+    else showToast('열 수 있는 원본 링크가 없습니다.','error');
+    return;
+  }
+  const modal=$('pdp-preview-modal'),content=$('pdp-preview-media');if(!modal||!content)return;
+  content.replaceChildren();
+  const media=it.type==='carousel'?(it.carousel||[]):[it];
+  if(!media.length){showToast('표시할 원본 미디어가 없습니다.','error');return;}
+  $('pdp-preview-title').textContent=it.title||'상세페이지 전체 보기';
+  media.forEach((slide,index)=>{
+    const wrapper=document.createElement('section');wrapper.className='pdp-preview-slide';
+    if(media.length>1){const header=document.createElement('div');header.className='pdp-preview-slide-title';header.textContent=`${index+1} / ${media.length}`;wrapper.append(header);}
+    const video=(slide.mimeType||'').startsWith('video/')||(it.type==='video');
+    const element=document.createElement(video?'video':'img');
+    if(video)element.controls=true;else element.alt=`${it.title||'상세페이지'} · ${index+1}`;
+    bindDriveMedia(element,slide);
+    wrapper.append(element);content.append(wrapper);
+  });
+  modal.hidden=false;
+}
+function closeDetailPagePreview(){const modal=$('pdp-preview-modal');if(!modal)return;modal.hidden=true;$('pdp-preview-media')?.replaceChildren();}
+
+function detailPageEditorHTML(it){
+  const p=normalizeDetailPage(it.detailPage);
+  const presetCats=[...new Set([...PDP_PRODUCT_CATEGORIES,...detailPageItems().map(x=>x.detailPage?.productCategory).filter(Boolean)])];
+  const appealOptions=[...new Set([...PDP_APPEALS,...p.appeals,...p.appealEntries.map(e=>e.type).filter(Boolean)])];
+  const sectionOptions=[...new Set([...PDP_SECTIONS,...p.sections])];
+  const checkTags=(name,values,chosen)=>`<div id="pdp-${name}" class="pdp-tag-list">${values.map(v=>`<label class="pdp-check"><input type="checkbox" value="${esc(v)}" ${chosen.includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div>`;
+  return `
+    ${it.type==='carousel'?carouselThumbStrip(it):''}
+    <div class="pdp-editor-heading"><strong>상세페이지 소구 분석</strong><span>직접 확인한 요소만 기록합니다. 기존 자료와 미디어 원본은 그대로 유지됩니다.</span></div>
+    <div class="form-row"><label class="form-label">제목</label><input id="detail-edit-title" class="detail-input" value="${esc(it.title||'')}"></div>
+    <div class="form-row"><label class="form-label">브랜드</label><input id="detail-edit-brand" class="detail-input" value="${esc(it.brand||'')}"></div>
+    <div class="form-row"><label class="form-label">제품 카테고리</label><input id="pdp-product-category" class="detail-input" list="pdp-category-suggestions" value="${esc(p.productCategory)}" placeholder="예: 주방세제 · 직접 입력 가능"><datalist id="pdp-category-suggestions">${presetCats.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist></div>
+    <div class="pdp-editor-group"><h3>소구 포인트 <small>복수 선택 · 구체적 판매 주장을 자동 생성하지 않습니다</small></h3>${checkTags('point-tags',appealOptions,p.appeals)}<div class="pdp-custom-row"><input class="detail-input" id="pdp-new-tag" placeholder="새 소구 분류 추가" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();event.stopPropagation();addCustomPdpTag()}"><button type="button" class="detail-btn" onclick="addCustomPdpTag()">추가</button></div></div>
+    <div class="pdp-editor-group"><h3>상세페이지 구성 단계 <small>해당 페이지에서 확인한 구간만 선택</small></h3>${checkTags('sections',sectionOptions,p.sections)}</div>
+    <div class="form-row"><label class="form-label">메인 카피·후킹</label><textarea class="detail-input" id="pdp-hero-copy" rows="2" placeholder="상세페이지에 실제 쓰인 문구를 기록">${esc(p.heroCopy)}</textarea></div>
+    <div class="pdp-editor-group"><div class="pdp-row-heading"><h3>소구 포인트별 메모 <small>하나의 페이지에서 여러 포인트를 나눠 기록</small></h3><button type="button" class="detail-btn" onclick="addDetailAppealEntry()">+ 항목 추가</button></div><div id="pdp-appeal-entries">${p.appealEntries.map(entry=>detailAppealEntryHTML(entry,appealOptions)).join('')}</div><p class="pdp-help">카피와 근거는 실제 상세페이지에서 확인한 내용만 적어주세요. 근거가 확인되지 않으면 비워둘 수 있습니다.</p></div>
+    <div class="form-row"><label class="form-label">상세페이지 전개·구성 메모</label><textarea class="detail-input" id="pdp-structure-note" rows="3" placeholder="첫 화면 → 제품 설명 → 근거 → 구매 유도 등 관찰한 흐름">${esc(p.structureNote)}</textarea></div>
+    <details class="pdp-legacy-panel"><summary>기존 레퍼런스 분석 태그·반응 지표 <small>원본 태그 보존 및 수정</small></summary><div id="detail-facets-block" class="facet-editor">${facetFieldsHTML('detail',it.facets)}</div>${socialMetricInputsHTML('detail',it.socialMetrics)}</details>
+    <div class="form-row"><label class="form-label">원본 링크</label><input class="detail-input" id="detail-edit-link" value="${esc(it.sourceUrl||(it.type==='link'?it.src:'')||'')}" placeholder="https://"><button class="detail-btn" type="button" onclick="const u=$('detail-edit-link').value;if(/^https?:\/\//i.test(u))window.open(u,'_blank','noopener')">원본 열기</button></div>
+    <div class="form-row"><label class="form-label">기타 메모</label><textarea class="detail-input" id="detail-edit-notes" rows="3">${esc(it.notes||'')}</textarea></div>
+    <p class="detail-helper">입력칸 Enter 저장 · 메모 Enter 줄바꿈 / Ctrl·⌘ + Enter 저장 · Drive 반영은 상단에서 별도 실행</p>
+    <div class="detail-actions"><button id="detail-save-btn" type="button" class="detail-btn primary" onclick="saveDetailEdits()">수정 저장</button><button type="button" class="detail-btn" onclick="openDetailPagePreview(selectedId)">전체 보기</button><button type="button" class="detail-btn" onclick="moveItemCollection(selectedId,'references')">일반 레퍼런스로 이동</button>${isDownloadableItem(it)?'<button class="detail-btn" type="button" onclick="downloadItemMedia(selectedId)">다운로드</button>':''}<button class="detail-btn" type="button" onclick="renderDetail()">되돌리기</button><button class="detail-btn" style="color:var(--red)" type="button" onclick="deleteItem(selectedId)">삭제</button></div>
+    <hr class="detail-divider"><div class="detail-field"><div class="detail-key">원본 미디어</div><div class="detail-val">${esc(it.type||'-')} · ${esc(it.driveFileId||'로컬/URL')}</div></div>`;
+}
+function detailAppealEntryHTML(entry={},allOptions=PDP_APPEALS){
+  const options=[...new Set([...allOptions,entry.type].filter(Boolean))];
+  return `<div class="pdp-appeal-entry" data-entry-id="${esc(entry.id||uid('pe'))}"><div class="pdp-entry-head"><select class="detail-input pdp-entry-type" aria-label="소구 분류"><option value="">소구 분류 선택</option>${options.map(v=>`<option value="${esc(v)}" ${entry.type===v?'selected':''}>${esc(v)}</option>`).join('')}</select><button type="button" class="detail-btn" onclick="this.closest('.pdp-appeal-entry').remove()" aria-label="이 소구 항목 삭제">제거</button></div><textarea class="detail-input pdp-entry-copy" rows="2" placeholder="관련 카피 / 전달 메시지">${esc(entry.copy||'')}</textarea><textarea class="detail-input pdp-entry-evidence" rows="2" placeholder="사용한 이미지·시험서·표현 근거 (확인된 경우만)">${esc(entry.evidence||'')}</textarea></div>`;
+}
+function addDetailAppealEntry(){
+  const root=$('pdp-appeal-entries');if(!root)return;
+  const selected=[...document.querySelectorAll('#pdp-point-tags input')].map(x=>x.value);
+  root.insertAdjacentHTML('beforeend',detailAppealEntryHTML({},[...new Set([...PDP_APPEALS,...selected])]));
+  root.lastElementChild?.querySelector('.pdp-entry-type')?.focus();
+}
+function addCustomPdpTag(){
+  const input=$('pdp-new-tag'),root=$('pdp-point-tags');if(!input||!root)return;
+  const value=input.value.trim();if(!value)return;
+  if(value.length>40){showToast('소구 분류는 40자 이내로 입력해 주세요.','error');return;}
+  const existing=[...root.querySelectorAll('input')].find(el=>el.value===value);
+  if(existing){existing.checked=true;}else{
+    const label=document.createElement('label');label.className='pdp-check';
+    const check=document.createElement('input');check.type='checkbox';check.value=value;check.checked=true;
+    const span=document.createElement('span');span.textContent=value;label.append(check,span);root.append(label);
+    document.querySelectorAll('.pdp-entry-type').forEach(select=>{
+      if(![...select.options].some(opt=>opt.value===value))select.add(new Option(value,value));
+    });
+  }
+  input.value='';
+}
+function readDetailPageEditorFields(base){
+  const p=normalizeDetailPage(base);
+  const checked=id=>[...document.querySelectorAll(`#${id} input[type="checkbox"]:checked`)].map(el=>el.value);
+  const entries=[...document.querySelectorAll('#pdp-appeal-entries .pdp-appeal-entry')].map(row=>({
+    id:row.dataset.entryId||uid('pe'),
+    type:row.querySelector('.pdp-entry-type')?.value||'',
+    copy:row.querySelector('.pdp-entry-copy')?.value.trim()||'',
+    evidence:row.querySelector('.pdp-entry-evidence')?.value.trim()||''
+  })).filter(row=>row.type||row.copy||row.evidence);
+  return {...p,productCategory:($('pdp-product-category')?.value||'').trim(),
+    appeals:[...new Set([...checked('pdp-point-tags'),...entries.filter(e=>e.copy||e.evidence).map(e=>e.type).filter(Boolean)])],
+    sections:checked('pdp-sections'),heroCopy:$('pdp-hero-copy')?.value||'',
+    structureNote:$('pdp-structure-note')?.value||'',appealEntries:entries};
+}
+function moveItemCollection(id,destination){
+  const it=items.find(item=>item.id===id);if(!it)return;
+  if(driveSaveBusy||copyDriveLoading||aiSyncBusy){showToast('Drive 작업 후 다시 분류해 주세요.','error');return;}
+  const previous=it.collectionKind;
+  it.collectionKind=destination==='detailPage'?'detailPage':'references';
+  if(it.collectionKind==='detailPage'&&!it.detailPage)it.detailPage=normalizeDetailPage({});
+  try{saveLocal();setManualDrivePending(true);}
+  catch(error){it.collectionKind=previous;showToast('로컬 분류 저장에 실패했습니다.','error');return;}
+  setCollectionPage(it.collectionKind==='detailPage'?'detailPages':'references');
+  renderAll();
+  showToast(it.collectionKind==='detailPage'?'상세페이지 모음으로 분류했습니다.':'일반 레퍼런스로 분류했습니다.','success');
+}
+function renderDetailPageFilters(){
+  const pages=detailPageItems();
+  const cats=[...new Set([...PDP_PRODUCT_CATEGORIES,...pages.map(it=>it.detailPage?.productCategory).filter(Boolean)])];
+  const points=[...new Set([...PDP_APPEALS,...pages.flatMap(it=>it.detailPage?.appeals||[])])];
+  const sections=[...new Set([...PDP_SECTIONS,...pages.flatMap(it=>it.detailPage?.sections||[])])];
+  for(const [id,options] of [['pdp-category-filter',cats],['pdp-appeal-filter',points],['pdp-section-filter',sections]]){
+    const el=$(id);if(!el)return;
+    const current=el.value;
+    el.replaceChildren(new Option('전체', ''));
+    options.forEach(value=>el.add(new Option(value,value)));
+    el.value=options.includes(current)?current:'';
+  }
+}
+function renderDetailPageCandidates(){
+  const root=$('pdp-candidate-list'),section=$('pdp-candidates');if(!root||!section)return;
+  const found=items.filter(isDetailPageCandidate);
+  section.hidden=!found.length;
+  root.replaceChildren();
+  found.forEach(it=>{
+    const row=document.createElement('div');row.className='pdp-candidate';
+    const title=document.createElement('div');title.className='pdp-candidate-title';
+    const strong=document.createElement('strong');strong.textContent=it.title||'제목 없음';
+    const small=document.createElement('span');small.textContent='기존 ‘랜딩/상세페이지’ 혼합 카테고리 · 직접 확인 필요';
+    title.append(strong,small);row.append(title);
+    const yes=document.createElement('button');yes.type='button';yes.className='tb-btn primary';yes.textContent='상세페이지로 분류';yes.onclick=()=>moveItemCollection(it.id,'detailPage');
+    const no=document.createElement('button');no.type='button';no.className='tb-btn';no.textContent='일반 레퍼런스 유지';no.onclick=()=>moveItemCollection(it.id,'references');
+    row.append(yes,no);root.append(row);
+  });
+  $('pdp-candidate-count').textContent=String(found.length);
+}
+function resetPdpFilters(){
+  ['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-search'].forEach(id=>{if($(id))$(id).value='';});
+  renderDetailPages();
+}
+function renderDetailPages(){
+  const root=$('pdp-board');if(!root)return;
+  const pages=detailPageItems();
+  const nav=$('pdp-nav-count');if(nav)nav.textContent=String(pages.length);
+  const total=$('pdp-total');if(total)total.textContent=`${pages.length}개`;
+  // 별도 상세페이지 탭이 열렸을 때만 미디어 카드 DOM을 구성해 불필요한 Drive 요청을 방지합니다.
+  if(collectionPage!=='detailPages')return;
+  renderDetailPageFilters();
+  const q=($('pdp-search')?.value||'').trim().toLocaleLowerCase();
+  const cat=$('pdp-category-filter')?.value||'',appeal=$('pdp-appeal-filter')?.value||'',section=$('pdp-section-filter')?.value||'',status=$('pdp-classification-filter')?.value||'';
+  const filtered=pages.filter(it=>{
+    const p=normalizeDetailPage(it.detailPage);
+    if(cat&&p.productCategory!==cat)return false;
+    if(appeal&&!p.appeals.includes(appeal))return false;
+    if(section&&!p.sections.includes(section))return false;
+    const hasClassification=!!(p.productCategory||p.appeals.length||p.sections.length||p.appealEntries.length);
+    if(status==='classified'&&!hasClassification)return false;
+    if(status==='unclassified'&&hasClassification)return false;
+    return !q||[it.title,it.brand,it.sourceUrl,it.notes,p.productCategory,p.heroCopy,p.structureNote,...p.appeals,...p.sections,...p.appealEntries.flatMap(e=>[e.type,e.copy,e.evidence])].join(' ').toLocaleLowerCase().includes(q);
+  }).sort((a,b)=>(Number(b.ts)||0)-(Number(a.ts)||0));
+  const count=$('pdp-visible');if(count)count.textContent=`${filtered.length}개 표시`;
+  root.replaceChildren();
+  if(!filtered.length){
+    const empty=document.createElement('div');empty.className='copy-empty pdp-empty';
+    const title=document.createElement('h3');title.textContent=q||cat||appeal||section||status?'조건에 맞는 상세페이지가 없습니다.':'모아둔 상세페이지가 없습니다.';
+    const help=document.createElement('p');help.textContent='기존 레퍼런스에서 상세페이지로 분류하거나 위의 추가 버튼을 사용하세요.';
+    empty.append(title,help);root.append(empty);
+  }else{
+    // 원본 카드 생성/미디어 바인딩을 재사용합니다.
+    filtered.forEach((it,index)=>root.append(cardNode(it,index)));
+  }
+  renderDetailPageCandidates();
+}
+function openDetailPageAddModal(){setCollectionPage('detailPages');openAddModal();}
 
 // ─── Initialization ───
 window.addEventListener('DOMContentLoaded',()=>{
@@ -2511,9 +2744,10 @@ window.addEventListener('DOMContentLoaded',()=>{
   document.addEventListener('keydown',event=>{
     const tag=event.target?.tagName?.toLowerCase();
     if(event.key==='/'&&!event.ctrlKey&&!event.metaKey&&!['input','textarea','select'].includes(tag)){
-      event.preventDefault();$(collectionPage==='copies'?'copy-search':'search-input')?.focus();
+      event.preventDefault();$(collectionPage==='copies'?'copy-search':collectionPage==='detailPages'?'pdp-search':'search-input')?.focus();
     }
     if(event.key==='Escape'&&document.activeElement?.id==='search-input')document.activeElement.blur();
+    if(event.key==='Escape'&&!$('pdp-preview-modal')?.hidden)closeDetailPagePreview();
   });
 
   updateDriveUi();
@@ -2545,17 +2779,22 @@ function normalizeCopyNotes(value){
   });
 }
 function setCollectionPage(page){
-  collectionPage=page==='copies'?'copies':'references';
-  const isCopy=collectionPage==='copies';
+  if(!['references','copies','detailPages'].includes(page))page='references';
+  collectionPage=page;
+  const isCopy=collectionPage==='copies',isDetail=collectionPage==='detailPages';
   document.body.classList.toggle('copy-mode',isCopy);
+  document.body.classList.toggle('pdp-mode',isDetail);
   $('copy-page').hidden=!isCopy;
-  for(const name of ['references','copies']){
+  $('detail-page').hidden=!isDetail;
+  for(const name of ['references','copies','detailPages']){
     const button=$('nav-'+name);
     if(name===collectionPage)button.setAttribute('aria-current','page');
     else button.removeAttribute('aria-current');
   }
+  closeDetail();
   closeMobileSidebar();
-  if(isCopy){closeDetail();renderCopies();renderCopyLinkPicker();}
+  if(isCopy){renderCopies();renderCopyLinkPicker();}
+  if(isDetail)renderDetailPages();
 }
 function copyDraftChanged(){
   const note=copyNotes.find(n=>n.id===copyEditingId);
@@ -2653,7 +2892,7 @@ function initCopyCollection(){
 
 function openCopyLinkedContent(id){
   if(!items.some(item=>item.id===id)){showToast('콘텐츠를 찾을 수 없습니다.','error');return;}
-  setCollectionPage('references');openDetail(id);
+  setCollectionPage(isDetailPageItem(items.find(it=>it.id===id))?'detailPages':'references');openDetail(id);
 }
 function renderCopyLinkPicker(){
   const root=$('copy-link-options');if(!root)return;
