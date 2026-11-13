@@ -371,6 +371,7 @@ function socialMetricCardHTML(it){
 
 
 // ─── 상세페이지 아카이브: 기존 미디어 items를 보존하면서 화면과 분석 분류만 분리 ───
+const PDP_AI_RESULTS_FILE_NAME='refboard-pdp-ai.json';
 const PDP_PRODUCT_CATEGORIES=['주방세제','세탁세제','세정·청소용품','생활·위생용품','뷰티·퍼스널케어','식품·음료','리빙·인테리어','패션·잡화','테크·가전','문화·굿즈','기타'];
 const PDP_APPEALS=['세정력·성능','안전성·시험 근거','성분·원료','향·감각 경험','사용 편의성','디자인·패키지','경제성·용량','문제 해결','브랜드 스토리·철학','친환경·지속가능성','후기·사회적 증거','차별화·비교','혜택·가격','인증·수상','기타'];
 const PDP_SECTIONS=['첫 화면·후킹','고객 문제·공감','핵심 혜택·USP','기능·성능 설명','시험·인증·근거','사용 장면·시연','사용법·FAQ','경쟁 제품 비교','브랜드 스토리','리뷰·사회적 증거','혜택·구매 CTA','기타'];
@@ -470,14 +471,39 @@ function mergePdpAiFromDrive(remoteItems){
   }
   return updated;
 }
-async function getPdpDriveItems(){
+// 상세페이지 AI 결과 전용 파일을 우선 읽습니다. 기존 Code.gs의 JSON은 호환용으로만 조회합니다.
+// 파일이 서로 다른 Drive JSON에 연결됐다면 조용히 0건 처리하지 않고 오류로 알려줍니다.
+async function getPdpDriveAnalysisSnapshot(){
   await ensureDriveToken();await ensureDriveFolder();
-  const file=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
-  if(!file)throw new Error('Drive에 refboard-data.json 파일이 없습니다. 먼저 Drive에 저장해 주세요.');
-  gdriveDataFileId=file.id;
-  const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`)).json();
-  if(!Array.isArray(data.items))throw new Error('Drive 데이터에 items 목록이 없습니다.');
-  return data.items;
+  const source=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
+  if(!source)throw new Error('Drive에 refboard-data.json이 없습니다. 사이트에서 Drive에 저장하고 다시 시도하세요.');
+  gdriveDataFileId=source.id;
+  const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${source.id}?alt=media`)).json();
+  if(!Array.isArray(data.items))throw new Error('기존 Drive 데이터에 items 배열이 없습니다.');
+  const previous=new Map(data.items.filter(it=>it?.id&&it.detailPage?.pdpAi).map(it=>[it.id,{id:it.id,detailPage:{pdpAi:it.detailPage.pdpAi}}]));
+  const sidecar=await findDriveFile(PDP_AI_RESULTS_FILE_NAME,'application/json',gdriveFolderId);
+  let sidecarCount=0,sidecarUpdatedAt='',sidecarFileId='';
+  if(sidecar){
+    sidecarFileId=sidecar.id;
+    const result=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${sidecar.id}?alt=media`)).json();
+    if(!result||typeof result.results!=='object'||Array.isArray(result.results)||!result.results)
+      throw new Error('상세페이지 AI 결과 파일의 형식이 잘못되었습니다.');
+    if(result.sourceDataFileId&&result.sourceDataFileId!==source.id)
+      throw new Error('상세페이지 AI 결과가 다른 레퍼런스 JSON에 연결되어 있습니다. Apps Script의 pdpCheckSetup에서 Drive 파일 ID를 확인해 주세요.');
+    sidecarUpdatedAt=result.updatedAt||'';
+    for(const [id,ai] of Object.entries(result.results)){
+      if(!id||!ai||typeof ai!=='object')continue;
+      sidecarCount++;
+      const old=previous.get(id)?.detailPage?.pdpAi;
+      // 일반 JSON에 더 최근에 직접 요청한 재분류가 있으면 해당 요청을 보존합니다.
+      const oldRequested=Date.parse(old?.requestedAt||'')||0;
+      const newTime=Date.parse(ai.analyzedAt||ai.requestedAt||'')||0;
+      if(old?.status==='pending'&&oldRequested>newTime)continue;
+      previous.set(id,{id,detailPage:{pdpAi:ai}});
+    }
+  }
+  return {items:[...previous.values()],sourceDataFileId:source.id,sidecarFileId,
+    sidecarCount,sidecarUpdatedAt,legacyCount:data.items.filter(it=>it?.detailPage?.pdpAi).length};
 }
 function pdpHasUnsavedEditorChanges(){
   if(collectionPage!=='detailPages'||!selectedId||!$('detail-panel')?.classList.contains('open')||!$('pdp-product-category'))return false;
@@ -499,14 +525,26 @@ async function syncPdpAiClassificationResults(){
   aiSyncBusy=true;if(button){button.disabled=true;button.textContent='결과 확인 중…';}
   if(note)note.textContent='Drive의 상세페이지 AI 기록을 확인하고 있습니다. 수동 메모와 카피는 유지됩니다.';
   try{
-    const remote=await getPdpDriveItems();
+    const snapshot=await getPdpDriveAnalysisSnapshot();
+    const remote=snapshot.items;
     const count=mergePdpAiFromDrive(remote);
     if(count)saveLocal(); // 이미 Drive에 저장된 분석 결과이므로 수동 Drive 저장 플래그를 추가하지 않습니다.
     pdpAiLastSync=new Date().toISOString();
     renderDetailPages();
     if(selectedId && collectionPage==='detailPages' && $('detail-panel')?.classList.contains('open'))renderDetail();
-    if(note)note.textContent=`Drive 결과 확인 ${new Date(pdpAiLastSync).toLocaleString('ko-KR')} · AI 기록 ${count}개 갱신 · 로컬 수동 수정 보존${isManualDrivePending()?' · 미저장 로컬 변경은 Drive에 저장 필요':''}`;
-    showToast(`상세페이지 AI 기록 ${count}개 반영 완료`,'success');return true;
+    const matched=remote.filter(x=>items.some(it=>it.id===x.id && isDetailPageItem(it) && isPdpAutoImageItem(it)));
+    const statuses={};matched.forEach(x=>{const s=x.detailPage.pdpAi.status||'pending';statuses[s]=(statuses[s]||0)+1;});
+    const statusText=Object.entries(statuses).map(([key,n])=>`${PDP_AI_LABELS[key]||key} ${n}`).join(' · ');
+    const sourceText=snapshot.sidecarFileId?'전용 AI 파일':'기존 JSON';
+    let message=`${sourceText} 확인 · AI 기록 ${remote.length}건 / 현재 상세페이지와 일치 ${matched.length}건 · 이번 갱신 ${count}건`;
+    if(statusText)message+=` · ${statusText}`;
+    if(!remote.length)message+=' · AI 기록 없음: Apps Script에서 pdpCheckSetup → pdpClassifyNextBatch 실행 결과를 확인하세요.';
+    else if(!matched.length)message+=' · 분석 기록의 항목 ID가 사이트의 상세페이지와 일치하지 않습니다. 같은 Drive 폴더인지 확인하세요.';
+    else if(!count)message+=' · 이미 최신 상태이거나, 아직 AI 완료 결과가 없습니다.';
+    if(isManualDrivePending())message+=' · 로컬 수정사항은 별도로 Drive 저장 필요';
+    if(note)note.textContent=message;
+    showToast(count?`상세페이지 AI 기록 ${count}건 반영`:message,count?'success':(matched.length?'':'error'));
+    return true;
   }catch(e){if(note)note.textContent='AI 결과 반영 실패: '+String(e.message||e);showToast('AI 결과를 가져오지 못했습니다.','error');return false;}
   finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 결과 반영';}}
 }
@@ -1051,8 +1089,8 @@ async function saveToDrive(silent=false){
     // Apps Script가 Drive에 쓴 AI 상태를 최신 기준으로 가져와, 로컬 저장이 결과를 되돌리지 않도록 합니다.
     const existing=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
     if(existing){
-      const driveItems=await getPdpDriveItems();
-      if(mergePdpAiFromDrive(driveItems))saveLocal();
+      const snapshot=await getPdpDriveAnalysisSnapshot();
+      if(mergePdpAiFromDrive(snapshot.items))saveLocal();
     }
     currentMedia='레퍼런스 목록(JSON)';
     await uploadDataFile();
