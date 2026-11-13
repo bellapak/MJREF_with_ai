@@ -412,6 +412,125 @@ function isDetailPageCandidate(it){
 }
 function referenceItems(){return items.filter(it=>!isDetailPageItem(it));}
 function detailPageItems(){return items.filter(isDetailPageItem);}
+// AI 자동분류는 이미지와 이미지 전용 캐러셀만. 영상·링크·영상 포함 캐러셀은 수동 분류합니다.
+function isPdpAutoImageItem(it){
+  if(!it)return false;
+  if(it.type==='image')return !/^video\//i.test(String(it.mimeType||'')) &&
+    !/\.(?:mp4|mov|m4v|webm|avi|mpeg|mpg|wmv|3gp)(?:[?#]|$)/i.test(String(it.fileName||it.src||''));
+  if(it.type!=='carousel')return false;
+  return Array.isArray(it.carousel)&&it.carousel.length>0&&it.carousel.every(slide=>slide&&
+    !/^video\//i.test(String(slide.mimeType||'')) &&
+    !/\.(?:mp4|mov|m4v|webm|avi|mpeg|mpg|wmv|3gp)(?:[?#]|$)/i.test(String(slide.fileName||slide.src||'')));
+}
+
+
+// 상세페이지 AI 상태와 제품/소구 수동 분류 완료는 별개입니다.
+function pdpAiStatus(it){
+  if(!isPdpAutoImageItem(it))return 'manual';
+  const value=it.detailPage?.pdpAi?.status;
+  return ['pending','processing','done','retry','review','error','skipped'].includes(value)?value:'pending';
+}
+const PDP_AI_LABELS={pending:'분석 대기',processing:'분석 중',done:'AI 완료',retry:'재시도 예정',review:'확인 필요',error:'분석 실패',skipped:'분석 제외',manual:'수동 분류'};
+let pdpAiLastSync='';
+function pdpAiSuggestionApply(item,suggested,analyzedAt){
+  const p=normalizeDetailPage(item.detailPage);
+  if(!suggested||typeof suggested!=='object')return;
+  // 사용자가 AI 결과 이후 상세페이지를 직접 편집했다면 AI 정보만 보존하고 입력값은 건드리지 않습니다.
+  const manualTime=Date.parse(p.manualEditedAt||'')||0;
+  if(manualTime&&(Date.parse(analyzedAt||'')||0)<=manualTime)return;
+  if(!p.productCategory)p.productCategory=String(suggested.productCategory||'');
+  p.appeals=[...new Set([...p.appeals,...(Array.isArray(suggested.appeals)?suggested.appeals:[])])];
+  p.sections=[...new Set([...p.sections,...(Array.isArray(suggested.sections)?suggested.sections:[])])];
+  if(!p.heroCopy)p.heroCopy=String(suggested.heroCopy||'');
+  if(!p.structureNote)p.structureNote=String(suggested.structureNote||'');
+  for(const e of Array.isArray(suggested.appealEntries)?suggested.appealEntries:[]){
+    if(!e||(!e.copy&&!e.evidence))continue;
+    if(!p.appealEntries.some(x=>x.type===e.type&&x.copy===e.copy))p.appealEntries.push({id:uid('pe'),type:String(e.type||''),copy:String(e.copy||''),evidence:String(e.evidence||'')});
+  }
+  item.detailPage=p;
+}
+// 사용자 수동 입력을 보존하면서 Drive의 AI 기록만 최신화합니다.
+function mergePdpAiFromDrive(remoteItems){
+  const incoming=new Map((remoteItems||[]).filter(it=>it&&it.id).map(it=>[it.id,it]));
+  let updated=0;
+  for(const it of items){
+    const remote=incoming.get(it.id), ai=remote?.detailPage?.pdpAi;
+    if(!remote||!ai||!isDetailPageItem(it)||!isPdpAutoImageItem(it))continue;
+    const current=it.detailPage?.pdpAi||{};
+    const localRequest=Date.parse(current.requestedAt||'')||0;
+    const remoteTime=Date.parse(ai.analyzedAt||ai.requestedAt||'')||0;
+    if(current.status==='pending' && localRequest>remoteTime)continue; // 로컬에서 새로 요청한 재분류를 덮어쓰지 않습니다.
+    const currentTime=Date.parse(current.analyzedAt||current.requestedAt||'')||0;
+    if(remoteTime<currentTime)continue;
+    if(remoteTime===currentTime && JSON.stringify(ai)===JSON.stringify(current))continue;
+    if(!it.detailPage)it.detailPage=normalizeDetailPage({});
+    if(ai.status==='done')pdpAiSuggestionApply(it,ai.suggested,ai.analyzedAt);
+    it.detailPage.pdpAi={...ai};
+    updated++;
+  }
+  return updated;
+}
+async function getPdpDriveItems(){
+  await ensureDriveToken();await ensureDriveFolder();
+  const file=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
+  if(!file)throw new Error('Drive에 refboard-data.json 파일이 없습니다. 먼저 Drive에 저장해 주세요.');
+  gdriveDataFileId=file.id;
+  const data=await (await driveFetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`)).json();
+  if(!Array.isArray(data.items))throw new Error('Drive 데이터에 items 목록이 없습니다.');
+  return data.items;
+}
+function pdpHasUnsavedEditorChanges(){
+  if(collectionPage!=='detailPages'||!selectedId||!$('detail-panel')?.classList.contains('open')||!$('pdp-product-category'))return false;
+  const it=items.find(x=>x.id===selectedId);if(!it)return false;
+  const p=normalizeDetailPage(it.detailPage),draft=readDetailPageEditorFields(p);
+  const sorted=v=>JSON.stringify([...v].sort());
+  return ($('detail-edit-title')?.value.trim()||'제목없음')!==it.title ||
+    ($('detail-edit-brand')?.value||'')!==(it.brand||'') ||
+    ($('detail-edit-notes')?.value||'')!==(it.notes||'') ||
+    ($('detail-edit-link')?.value||'')!==(it.sourceUrl|| (it.type==='link'?it.src:'')||'') ||
+    draft.productCategory!==p.productCategory||draft.heroCopy!==p.heroCopy||draft.structureNote!==p.structureNote||
+    sorted(draft.appeals)!==sorted(p.appeals)||sorted(draft.sections)!==sorted(p.sections)||
+    JSON.stringify(draft.appealEntries)!==JSON.stringify(p.appealEntries);
+}
+async function syncPdpAiClassificationResults(){
+  if(pdpHasUnsavedEditorChanges()){showToast('상세페이지에 입력 중인 내용을 먼저 수정 저장해 주세요.','error');return false;}
+  if(aiSyncBusy||driveSaveBusy||copyDriveLoading){showToast('다른 Drive 작업이 진행 중입니다.','error');return false;}
+  const button=$('pdp-sync-ai-btn'),note=$('pdp-ai-sync-note');
+  aiSyncBusy=true;if(button){button.disabled=true;button.textContent='결과 확인 중…';}
+  if(note)note.textContent='Drive의 상세페이지 AI 기록을 확인하고 있습니다. 수동 메모와 카피는 유지됩니다.';
+  try{
+    const remote=await getPdpDriveItems();
+    const count=mergePdpAiFromDrive(remote);
+    if(count)saveLocal(); // 이미 Drive에 저장된 분석 결과이므로 수동 Drive 저장 플래그를 추가하지 않습니다.
+    pdpAiLastSync=new Date().toISOString();
+    renderDetailPages();
+    if(selectedId && collectionPage==='detailPages' && $('detail-panel')?.classList.contains('open'))renderDetail();
+    if(note)note.textContent=`Drive 결과 확인 ${new Date(pdpAiLastSync).toLocaleString('ko-KR')} · AI 기록 ${count}개 갱신 · 로컬 수동 수정 보존${isManualDrivePending()?' · 미저장 로컬 변경은 Drive에 저장 필요':''}`;
+    showToast(`상세페이지 AI 기록 ${count}개 반영 완료`,'success');return true;
+  }catch(e){if(note)note.textContent='AI 결과 반영 실패: '+String(e.message||e);showToast('AI 결과를 가져오지 못했습니다.','error');return false;}
+  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 결과 반영';}}
+}
+function requestPdpReclassification(id){
+  const it=items.find(x=>x.id===id);if(!it||!isDetailPageItem(it)||!isPdpAutoImageItem(it))return;
+  if(!confirm('이 이미지의 AI 분류를 다시 요청할까요? 기존 수동 태그와 메모는 유지됩니다. Drive에 저장한 후 Apps Script가 실행되어야 처리됩니다.'))return;
+  const p=normalizeDetailPage(it.detailPage),old=p.pdpAi||{};
+  p.pdpAi={...old,status:'pending',retryCount:0,reason:'사용자 재분류 요청',nextRetryAt:'',requestedAt:new Date().toISOString()};
+  it.detailPage=p;
+  try{saveLocal();setManualDrivePending(true);}catch(e){p.pdpAi=old;showToast('재분류 요청 저장 실패','error');return;}
+  renderDetailPages();renderDetail();
+  showToast('재분류 대기 등록 · Drive에 저장한 다음 Apps Script를 실행해 주세요.','success');
+}
+function pdpAiDetailHTML(it){
+  const status=pdpAiStatus(it), ai=it.detailPage?.pdpAi||{};
+  const date=ai.analyzedAt&&!Number.isNaN(Date.parse(ai.analyzedAt))?new Date(ai.analyzedAt).toLocaleString('ko-KR'):'';
+  const due=ai.nextRetryAt&&!Number.isNaN(Date.parse(ai.nextRetryAt))?new Date(ai.nextRetryAt).toLocaleString('ko-KR'):'';
+  const confidence=Number.isFinite(Number(ai.confidence))&&ai.confidence!==undefined?` · AI 자체 신뢰도 ${Math.round(Number(ai.confidence)*100)}%`:'';
+  return `<section class="pdp-ai-detail" aria-label="이 상세페이지의 AI 분류 상태"><div class="pdp-ai-detail-head"><strong>AI 분류 기록</strong><span class="pdp-ai-status-pill pdp-ai-${esc(status)}">${esc(PDP_AI_LABELS[status])}</span></div>
+    <p>${status==='manual'?'영상·영상 포함 캐러셀·링크는 AI 분석 대상에서 제외되며 직접 분류합니다.':status==='pending'?'Drive에 저장된 뒤 Apps Script에서 분석할 수 있습니다.':status==='retry'?`Gemini가 일시적으로 응답하지 않아 재시도 예정${due?' · '+esc(due):''}`:status==='done'?'AI가 확인한 제품군·소구·구성 단계가 아래 편집란에 반영됩니다. 직접 수정할 수 있습니다.':''}</p>
+    ${ai.reason?`<p class="pdp-ai-error-reason">${esc(ai.reason)}</p>`:''}${date?`<small>마지막 분석 ${esc(date)}${esc(confidence)}</small>`:''}
+    ${status!=='manual'?`<button type="button" class="detail-btn" onclick="requestPdpReclassification(selectedId)">AI 재분류 요청</button><p class="pdp-ai-detail-tip">수동 메모·카피는 지워지지 않습니다. Drive에 저장해야 요청이 반영됩니다.</p>`:''}
+  </section>`;
+}
 
 function normalizeItem(raw={}){
   let src=raw.src || raw.url || raw.mediaUrl || '';
@@ -928,6 +1047,13 @@ async function saveToDrive(silent=false){
     });
     if(missing.length)throw new Error(`업로드하지 못한 이미지 ${missing.length}개가 있습니다. (${missing[0]})`);
 
+    currentMedia='Drive의 상세페이지 AI 결과 병합';
+    // Apps Script가 Drive에 쓴 AI 상태를 최신 기준으로 가져와, 로컬 저장이 결과를 되돌리지 않도록 합니다.
+    const existing=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
+    if(existing){
+      const driveItems=await getPdpDriveItems();
+      if(mergePdpAiFromDrive(driveItems))saveLocal();
+    }
     currentMedia='레퍼런스 목록(JSON)';
     await uploadDataFile();
     // 매체 및 JSON이 Drive에 안전하게 업로드된 다음에만 삭제 예약을 처리합니다.
@@ -1117,6 +1243,7 @@ function openAiScriptConsole(){
   }
   window.open(url,'_blank','noopener,noreferrer');
   const msg=$('ai-sync-message');if(msg)msg.textContent='Apps Script에서 classifyNextBatch를 실행하고, 완료 후 여기서 AI 분류 결과 반영을 누르세요.';
+  if(collectionPage==='detailPages'&&$('pdp-ai-sync-note'))$('pdp-ai-sync-note').textContent='Apps Script에서 pdpClassifyNextBatch를 실행한 후 ‘AI 결과 반영’을 누르세요. 영상은 직접 분류합니다.';
 }
 async function syncAiClassificationResults(){
   if(aiSyncBusy)return;
@@ -1125,8 +1252,10 @@ async function syncAiClassificationResults(){
     showToast('먼저 Google Drive에 연결하세요.','error');return;
   }
   const before=new Map(items.map(it=>[it.id,JSON.stringify(it.facets||{})]));
-  const button=$('ai-sync-button'), msg=$('ai-sync-message');
+  const button=$('ai-sync-button'),pdpButton=$('pdp-sync-ai-btn'), msg=$('ai-sync-message');
   aiSyncBusy=true;if(button){button.disabled=true;button.textContent='불러오는 중…';}
+  if(pdpButton){pdpButton.disabled=true;pdpButton.textContent='불러오는 중…';}
+  if(collectionPage==='detailPages'&&$('pdp-ai-sync-note'))$('pdp-ai-sync-note').textContent='Drive의 최신 결과를 가져오는 중입니다.';
   if(msg)msg.textContent='Google Drive의 최신 분류 결과를 가져오는 중입니다. 이 작업은 GPT 분석을 실행하지 않습니다.';
   try{
     const ok=await loadFromDrive();
@@ -1135,8 +1264,10 @@ async function syncAiClassificationResults(){
     const newlyClassified=items.filter(it=>before.has(it.id)&&before.get(it.id)===JSON.stringify({})&&isClassified(it)).length;
     updateAiClassificationStats();
     if(msg)msg.textContent=`최신 결과 반영 완료 · 분류 태그 변경 ${changed}개${newlyClassified?` · 신규 분류 ${newlyClassified}개`:''}. 변경이 없다면 Apps Script에서 분류 저장이 완료되었는지 확인하세요.`;
-  }catch(err){if(msg)msg.textContent=err.message||'분류 결과 반영 중 오류가 발생했습니다.';}
-  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 분류 결과 반영';}}
+  }catch(err){if(msg)msg.textContent=err.message||'분류 결과 반영 중 오류가 발생했습니다.';
+    if(collectionPage==='detailPages'&&$('pdp-ai-sync-note'))$('pdp-ai-sync-note').textContent=err.message||'Drive 결과 반영에 실패했습니다.';}
+  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 분류 결과 반영';}
+    if(pdpButton){pdpButton.disabled=false;pdpButton.textContent='↻ AI 결과 반영';}}
 }
 
 // ─── Image Lazy Loading & Drive API Fetcher ───
@@ -1545,6 +1676,7 @@ async function deleteItem(id){
   if(!confirm(msg)) return;
   rememberDeletedDriveIds(ids);
   items=items.filter(i=>i.id!==id);
+  bulkSelectedIds.delete(id);
   if(selectedId===id) closeDetail();
   saveLocal(); setManualDrivePending(true); renderAll();
   showToast('로컬 삭제 완료 · Drive에는 수동 저장 시 반영됩니다','success');
@@ -1562,6 +1694,7 @@ async function deleteAllItems(){
   rememberDeletedDriveIds(allDriveIds);
 
   items=items.filter(isDetailPageItem);
+  bulkSelectedIds.clear();
   selectedId=null;
   $('detail-panel')?.classList.remove('open');
   saveLocal();
@@ -1667,6 +1800,8 @@ function renderAll(){
   renderCopies();
   renderBoard();
   renderDetailPages();
+  updatePdpAiStatus();
+  updateBulkToolbars();
   updateDriveUi();
   updateAiClassificationStats();
 }
@@ -1748,12 +1883,76 @@ function startInlineTitleEdit(id, titleEl){
   input.onclick=(e)=>e.stopPropagation();
 }
 
+// 상세페이지 간편 분류: 카드 1건 원클릭 / 현재 검색결과 다중 선택 후 일괄 이동.
+const bulkSelectedIds=new Set();
+function bulkSelectedCurrentPage(){
+  const pages=collectionPage==='detailPages';
+  return [...bulkSelectedIds].filter(id=>items.some(it=>it.id===id&&isDetailPageItem(it)===pages));
+}
+function toggleBulkSelection(id){
+  if(bulkSelectedIds.has(id))bulkSelectedIds.delete(id);else bulkSelectedIds.add(id);
+  document.querySelectorAll('.ref-card[data-item-id]').forEach(card=>{
+    if(card.dataset.itemId!==id)return;
+    const selected=bulkSelectedIds.has(id);
+    card.classList.toggle('bulk-selected',selected);
+    const checkbox=card.querySelector('.card-bulk-check');if(checkbox)checkbox.checked=selected;
+  });
+  updateBulkToolbars();
+}
+function clearBulkSelection(){bulkSelectedIds.clear();renderBoard();renderDetailPages();updateBulkToolbars();}
+function selectAllCurrentResults(){
+  const visible=collectionPage==='detailPages'?getFilteredDetailPageItems():filteredItems();
+  visible.forEach(it=>bulkSelectedIds.add(it.id));
+  renderBoard();renderDetailPages();updateBulkToolbars();
+}
+function bulkMoveCollection(destination){
+  const ids=bulkSelectedCurrentPage();
+  if(!ids.length)return;
+  if(driveSaveBusy||copyDriveLoading||aiSyncBusy){showToast('Drive 작업 후 다시 분류해 주세요.','error');return;}
+  const previous=ids.map(id=>{const it=items.find(x=>x.id===id);return [it,it.collectionKind,it.detailPage];});
+  for(const [it] of previous){it.collectionKind=destination==='detailPage'?'detailPage':'references';if(destination==='detailPage'&&!it.detailPage)it.detailPage=normalizeDetailPage({});}
+  try{saveLocal();setManualDrivePending(true);}
+  catch(e){previous.forEach(([it,kind,pdp])=>{it.collectionKind=kind;it.detailPage=pdp;});showToast('저장 실패 · 분류 변경을 되돌렸습니다.','error');return;}
+  ids.forEach(id=>bulkSelectedIds.delete(id));
+  closeDetail();renderAll();
+  showToast(`${ids.length}개를 ${destination==='detailPage'?'상세페이지':'레퍼런스'} 모음으로 이동했습니다. · Drive 저장 필요`,'success');
+}
+function updateBulkToolbars(){
+  const selected=bulkSelectedCurrentPage();
+  for(const [id,active] of [['ref-bulk-toolbar',collectionPage==='references'],['pdp-bulk-toolbar',collectionPage==='detailPages']]){
+    const root=$(id);if(!root)continue;
+    root.hidden=!active; if(!active)continue;
+    const toPdp=collectionPage==='references';
+    root.replaceChildren();
+    const title=document.createElement('strong');title.textContent=selected.length?`${selected.length}개 선택됨`:'원하는 카드를 체크하면 한 번에 이동할 수 있어요';root.append(title);
+    const actions=document.createElement('div');actions.className='bulk-actions';root.append(actions);
+    const create=(label,fn,primary=false,disabled=false)=>{const b=document.createElement('button');b.type='button';b.className='tb-btn'+(primary?' primary':'');b.textContent=label;b.disabled=disabled;b.onclick=fn;actions.append(b);};
+    create('현재 검색결과 전체 선택',selectAllCurrentResults);
+    create(toPdp?'선택 → 상세페이지 모음':'선택 → 레퍼런스 모음',()=>bulkMoveCollection(toPdp?'detailPage':'references'),true,!selected.length);
+    if(selected.length)create('선택 해제',clearBulkSelection);
+  }
+}
+function moveCardQuick(id,destination){
+  moveItemCollection(id,destination,{stayOnPage:true});
+}
+
 function cardNode(it,index=0){
   const isPriority = currentView==='list' ? index < 8 : index < PRIORITY_CARD_COUNT;
   const card=document.createElement('div');
-  card.className='ref-card'+(it.id===selectedId?' selected':'');
+  card.className='ref-card'+(it.id===selectedId?' selected':'')+(bulkSelectedIds.has(it.id)?' bulk-selected':'');
   card.dataset.itemId=String(it.id);
   card.onclick=()=>openDetail(it.id);
+  const check=document.createElement('input');check.type='checkbox';check.className='card-bulk-check';check.checked=bulkSelectedIds.has(it.id);check.title='일괄 이동용 선택';check.setAttribute('aria-label',`${it.title} 선택`);
+  check.onclick=(e)=>e.stopPropagation();
+  check.onchange=(e)=>{e.stopPropagation();toggleBulkSelection(it.id);};
+  card.append(check);
+  const quick=document.createElement('button');quick.type='button';quick.className='card-quick-move';
+  const detail=isDetailPageItem(it);
+  quick.textContent=detail?'← 레퍼런스로':'→ 상세페이지로';
+  quick.title=detail?'레퍼런스 모음으로 즉시 이동':'상세페이지 모음으로 즉시 이동';
+  quick.setAttribute('aria-label',quick.title);
+  quick.onclick=(e)=>{e.stopPropagation();moveCardQuick(it.id,detail?'references':'detailPage');};
+  card.append(quick);
   const del=document.createElement('button'); del.className='card-delete'; del.textContent='×'; del.onclick=(e)=>{e.stopPropagation(); deleteItem(it.id);}; card.appendChild(del);
   if(isDownloadableItem(it)){
     const dl=document.createElement('button');
@@ -1787,6 +1986,13 @@ function cardNode(it,index=0){
   editBtn.onclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
   card.appendChild(info);
   
+  if(isDetailPageItem(it)){
+    const status=pdpAiStatus(it);
+    const ai=document.createElement('span');ai.className=`pdp-ai-card-status pdp-ai-${status}`;
+    ai.textContent=PDP_AI_LABELS[status];
+    ai.title=it.detailPage?.pdpAi?.reason|| (status==='manual'?'직접 분류 대상':'');
+    card.append(ai);
+  }
   const badge=document.createElement('div'); badge.className='card-type-badge'; 
   badge.textContent=it.type==='video'?'VIDEO':it.type==='carousel'?`CAROUSEL · ${(it.carousel||[]).length}`:it.type==='link'?'LINK':'IMAGE'; 
   card.appendChild(badge);
@@ -1802,6 +2008,7 @@ function renderBoard(){
   $('count-label') && ($('count-label').textContent=`${arr.length}개`);
   renderCounts();
   renderNavigatorChips();
+  updateBulkToolbars();
   
   const frag = document.createDocumentFragment();
   frag.appendChild(pasteBarNode());
@@ -2522,7 +2729,7 @@ function saveDetailEdits(){
   it.title=$('detail-edit-title')?.value.trim()||'제목없음';
   it.brand=$('detail-edit-brand')?.value.trim()||'';
   if($('detail-facets-block'))it.facets=readFacetFields('detail',it.facets);
-  if($('pdp-product-category'))it.detailPage=readDetailPageEditorFields(it.detailPage);
+  if($('pdp-product-category')){it.detailPage=readDetailPageEditorFields(it.detailPage);it.detailPage.manualEditedAt=new Date().toISOString();}
   synchronizeTitleFacets(it);
   it.sourceUrl=$('detail-edit-link')?.value||'';
   if(it.type==='link' && it.sourceUrl) it.src=it.sourceUrl;
@@ -2579,7 +2786,8 @@ function detailPageEditorHTML(it){
   const checkTags=(name,values,chosen)=>`<div id="pdp-${name}" class="pdp-tag-list">${values.map(v=>`<label class="pdp-check"><input type="checkbox" value="${esc(v)}" ${chosen.includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div>`;
   return `
     ${it.type==='carousel'?carouselThumbStrip(it):''}
-    <div class="pdp-editor-heading"><strong>상세페이지 소구 분석</strong><span>직접 확인한 요소만 기록합니다. 기존 자료와 미디어 원본은 그대로 유지됩니다.</span></div>
+    <div class="pdp-editor-heading"><strong>상세페이지 소구 분석</strong><span>${!isPdpAutoImageItem(it)?'영상·링크 자료는 직접 분류합니다. AI 자동분류 대상이 아닙니다.':'이미지는 AI 분류 가능 · 직접 확인한 요소만 기록합니다.'} 기존 자료와 미디어 원본은 그대로 유지됩니다.</span></div>
+    ${pdpAiDetailHTML(it)}
     <div class="form-row"><label class="form-label">제목</label><input id="detail-edit-title" class="detail-input" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input id="detail-edit-brand" class="detail-input" value="${esc(it.brand||'')}"></div>
     <div class="form-row"><label class="form-label">제품 카테고리</label><input id="pdp-product-category" class="detail-input" list="pdp-category-suggestions" value="${esc(p.productCategory)}" placeholder="예: 주방세제 · 직접 입력 가능"><datalist id="pdp-category-suggestions">${presetCats.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist></div>
@@ -2634,7 +2842,7 @@ function readDetailPageEditorFields(base){
     sections:checked('pdp-sections'),heroCopy:$('pdp-hero-copy')?.value||'',
     structureNote:$('pdp-structure-note')?.value||'',appealEntries:entries};
 }
-function moveItemCollection(id,destination){
+function moveItemCollection(id,destination,options={}){
   const it=items.find(item=>item.id===id);if(!it)return;
   if(driveSaveBusy||copyDriveLoading||aiSyncBusy){showToast('Drive 작업 후 다시 분류해 주세요.','error');return;}
   const previous=it.collectionKind;
@@ -2642,9 +2850,11 @@ function moveItemCollection(id,destination){
   if(it.collectionKind==='detailPage'&&!it.detailPage)it.detailPage=normalizeDetailPage({});
   try{saveLocal();setManualDrivePending(true);}
   catch(error){it.collectionKind=previous;showToast('로컬 분류 저장에 실패했습니다.','error');return;}
-  setCollectionPage(it.collectionKind==='detailPage'?'detailPages':'references');
+  bulkSelectedIds.delete(id);
+  if(!options.stayOnPage)setCollectionPage(it.collectionKind==='detailPage'?'detailPages':'references');
+  else closeDetail();
   renderAll();
-  showToast(it.collectionKind==='detailPage'?'상세페이지 모음으로 분류했습니다.':'일반 레퍼런스로 분류했습니다.','success');
+  showToast((it.collectionKind==='detailPage'?'상세페이지 모음으로 이동했습니다.':'일반 레퍼런스로 이동했습니다.')+' · Drive 저장 필요','success');
 }
 function renderDetailPageFilters(){
   const pages=detailPageItems();
@@ -2668,7 +2878,7 @@ function renderDetailPageCandidates(){
     const row=document.createElement('div');row.className='pdp-candidate';
     const title=document.createElement('div');title.className='pdp-candidate-title';
     const strong=document.createElement('strong');strong.textContent=it.title||'제목 없음';
-    const small=document.createElement('span');small.textContent='기존 ‘랜딩/상세페이지’ 혼합 카테고리 · 직접 확인 필요';
+    const small=document.createElement('span');small.textContent=`${it.type==='video'?'영상':it.type==='carousel'?'캐러셀':'이미지/링크'} · 기존 혼합 카테고리 · 직접 확인 필요`;
     title.append(strong,small);row.append(title);
     const yes=document.createElement('button');yes.type='button';yes.className='tb-btn primary';yes.textContent='상세페이지로 분류';yes.onclick=()=>moveItemCollection(it.id,'detailPage');
     const no=document.createElement('button');no.type='button';no.className='tb-btn';no.textContent='일반 레퍼런스 유지';no.onclick=()=>moveItemCollection(it.id,'references');
@@ -2677,20 +2887,17 @@ function renderDetailPageCandidates(){
   $('pdp-candidate-count').textContent=String(found.length);
 }
 function resetPdpFilters(){
-  ['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-search'].forEach(id=>{if($(id))$(id).value='';});
+  ['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-ai-filter','pdp-media-filter','pdp-search'].forEach(id=>{if($(id))$(id).value='';});
   renderDetailPages();
 }
-function renderDetailPages(){
-  const root=$('pdp-board');if(!root)return;
-  const pages=detailPageItems();
-  const nav=$('pdp-nav-count');if(nav)nav.textContent=String(pages.length);
-  const total=$('pdp-total');if(total)total.textContent=`${pages.length}개`;
-  // 별도 상세페이지 탭이 열렸을 때만 미디어 카드 DOM을 구성해 불필요한 Drive 요청을 방지합니다.
-  if(collectionPage!=='detailPages')return;
-  renderDetailPageFilters();
+function getFilteredDetailPageItems(){
   const q=($('pdp-search')?.value||'').trim().toLocaleLowerCase();
-  const cat=$('pdp-category-filter')?.value||'',appeal=$('pdp-appeal-filter')?.value||'',section=$('pdp-section-filter')?.value||'',status=$('pdp-classification-filter')?.value||'';
-  const filtered=pages.filter(it=>{
+  const cat=$('pdp-category-filter')?.value||'', appeal=$('pdp-appeal-filter')?.value||'',
+    section=$('pdp-section-filter')?.value||'',status=$('pdp-classification-filter')?.value||'',
+    media=$('pdp-media-filter')?.value||'',aiFilter=$('pdp-ai-filter')?.value||'';
+  return detailPageItems().filter(it=>{
+    if(aiFilter&&pdpAiStatus(it)!==aiFilter)return false;
+    if(media&&it.type!==media)return false;
     const p=normalizeDetailPage(it.detailPage);
     if(cat&&p.productCategory!==cat)return false;
     if(appeal&&!p.appeals.includes(appeal))return false;
@@ -2700,11 +2907,44 @@ function renderDetailPages(){
     if(status==='unclassified'&&hasClassification)return false;
     return !q||[it.title,it.brand,it.sourceUrl,it.notes,p.productCategory,p.heroCopy,p.structureNote,...p.appeals,...p.sections,...p.appealEntries.flatMap(e=>[e.type,e.copy,e.evidence])].join(' ').toLocaleLowerCase().includes(q);
   }).sort((a,b)=>(Number(b.ts)||0)-(Number(a.ts)||0));
+}
+function setPdpAiFilter(value){
+  const control=$('pdp-ai-filter');if(!control)return;
+  control.value=control.value===value?'':value;
+  renderDetailPages();
+}
+function updatePdpAiStatus(){
+  const ps=detailPageItems(),counts={pending:0,processing:0,done:0,retry:0,review:0,error:0,skipped:0,manual:0};
+  ps.forEach(it=>{const state=pdpAiStatus(it);counts[state]=(counts[state]||0)+1;});
+  const eligible=ps.length-counts.manual,completed=counts.done;
+  const percent=eligible?Math.round(completed/eligible*100):0;
+  const el=$('pdp-ai-status');if(el)el.textContent=`AI 분석 가능 이미지 ${eligible}개 중 완료 ${completed}개 · 영상·기타 수동 ${counts.manual}개`;
+  const progress=document.querySelector('.pdp-ai-progress');if(progress)progress.setAttribute('aria-valuenow',String(percent));
+  const fill=$('pdp-ai-progress-fill');if(fill)fill.style.width=percent+'%';
+  const stat=$('pdp-ai-stats');
+  if(stat){
+    const keys=['done','pending','processing','retry','review','error','skipped','manual'];
+    stat.innerHTML=keys.map(key=>`<button type="button" class="pdp-ai-stat pdp-ai-stat-${key}${$('pdp-ai-filter')?.value===key?' active':''}" onclick="setPdpAiFilter('${key}')" aria-pressed="${$('pdp-ai-filter')?.value===key}"><span>${PDP_AI_LABELS[key]}</span><strong>${counts[key]}</strong></button>`).join('');
+  }
+}
+function renderDetailPages(){
+  const root=$('pdp-board');if(!root)return;
+  const pages=detailPageItems();
+  const nav=$('pdp-nav-count');if(nav)nav.textContent=String(pages.length);
+  const total=$('pdp-total');if(total)total.textContent=`${pages.length}개`;
+  updatePdpAiStatus();
+  // 별도 상세페이지 탭이 열렸을 때만 미디어 카드 DOM을 구성해 불필요한 Drive 요청을 방지합니다.
+  if(collectionPage!=='detailPages')return;
+  renderDetailPageFilters();
+  const filtered=getFilteredDetailPageItems();
+  const q=($('pdp-search')?.value||'').trim().toLocaleLowerCase();
+  const cat=$('pdp-category-filter')?.value||'',appeal=$('pdp-appeal-filter')?.value||'',section=$('pdp-section-filter')?.value||'',status=$('pdp-classification-filter')?.value||'';
   const count=$('pdp-visible');if(count)count.textContent=`${filtered.length}개 표시`;
   root.replaceChildren();
+  updateBulkToolbars();
   if(!filtered.length){
     const empty=document.createElement('div');empty.className='copy-empty pdp-empty';
-    const title=document.createElement('h3');title.textContent=q||cat||appeal||section||status?'조건에 맞는 상세페이지가 없습니다.':'모아둔 상세페이지가 없습니다.';
+    const title=document.createElement('h3');title.textContent=q||['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-media-filter'].some(id=>$(id)?.value)?'조건에 맞는 상세페이지가 없습니다.':'모아둔 상세페이지가 없습니다.';
     const help=document.createElement('p');help.textContent='기존 레퍼런스에서 상세페이지로 분류하거나 위의 추가 버튼을 사용하세요.';
     empty.append(title,help);root.append(empty);
   }else{
@@ -2795,6 +3035,7 @@ function setCollectionPage(page){
   closeMobileSidebar();
   if(isCopy){renderCopies();renderCopyLinkPicker();}
   if(isDetail)renderDetailPages();
+  updateBulkToolbars();
 }
 function copyDraftChanged(){
   const note=copyNotes.find(n=>n.id===copyEditingId);
