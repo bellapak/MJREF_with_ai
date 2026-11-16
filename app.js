@@ -533,20 +533,15 @@ async function syncPdpAiClassificationResults(){
     renderDetailPages();
     if(selectedId && collectionPage==='detailPages' && $('detail-panel')?.classList.contains('open'))renderDetail();
     const matched=remote.filter(x=>items.some(it=>it.id===x.id && isDetailPageItem(it) && isPdpAutoImageItem(it)));
-    const statuses={};matched.forEach(x=>{const s=x.detailPage.pdpAi.status||'pending';statuses[s]=(statuses[s]||0)+1;});
-    const statusText=Object.entries(statuses).map(([key,n])=>`${PDP_AI_LABELS[key]||key} ${n}`).join(' · ');
-    const sourceText=snapshot.sidecarFileId?'전용 AI 파일':'기존 JSON';
-    let message=`${sourceText} 확인 · AI 기록 ${remote.length}건 / 현재 상세페이지와 일치 ${matched.length}건 · 이번 갱신 ${count}건`;
-    if(statusText)message+=` · ${statusText}`;
-    if(!remote.length)message+=' · AI 기록 없음: Apps Script에서 pdpCheckSetup → pdpClassifyNextBatch 실행 결과를 확인하세요.';
-    else if(!matched.length)message+=' · 분석 기록의 항목 ID가 사이트의 상세페이지와 일치하지 않습니다. 같은 Drive 폴더인지 확인하세요.';
-    else if(!count)message+=' · 이미 최신 상태이거나, 아직 AI 완료 결과가 없습니다.';
-    if(isManualDrivePending())message+=' · 로컬 수정사항은 별도로 Drive 저장 필요';
-    if(note)note.textContent=message;
-    showToast(count?`상세페이지 AI 기록 ${count}건 반영`:message,count?'success':(matched.length?'':'error'));
+    // AI 분류 현황 및 상태 수치는 화면에 노출하지 않습니다. 실행 결과만 간단히 알립니다.
+    console.info('상세페이지 AI 결과 반영:', {remoteRecords:remote.length,matchingItems:matched.length,updated:count,usingSeparateFile:!!snapshot.sidecarFileId});
+    if(count)showToast(`상세페이지 결과 ${count}건 반영 완료`,'success');
+    else if(!remote.length)showToast('반영할 AI 결과가 없습니다. Apps Script 실행 결과를 확인하세요.','error');
+    else if(!matched.length)showToast('현재 상세페이지와 일치하는 분석 결과가 없습니다.','error');
+    else showToast('이미 최신 결과가 반영되어 있습니다.','success');
     return true;
   }catch(e){if(note)note.textContent='AI 결과 반영 실패: '+String(e.message||e);showToast('AI 결과를 가져오지 못했습니다.','error');return false;}
-  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 결과 반영';}}
+  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='결과 반영';}}
 }
 function requestPdpReclassification(id){
   const it=items.find(x=>x.id===id);if(!it||!isDetailPageItem(it)||!isPdpAutoImageItem(it))return;
@@ -1305,7 +1300,7 @@ async function syncAiClassificationResults(){
   }catch(err){if(msg)msg.textContent=err.message||'분류 결과 반영 중 오류가 발생했습니다.';
     if(collectionPage==='detailPages'&&$('pdp-ai-sync-note'))$('pdp-ai-sync-note').textContent=err.message||'Drive 결과 반영에 실패했습니다.';}
   finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='↻ AI 분류 결과 반영';}
-    if(pdpButton){pdpButton.disabled=false;pdpButton.textContent='↻ AI 결과 반영';}}
+    if(pdpButton){pdpButton.disabled=false;pdpButton.textContent='결과 반영';}}
 }
 
 // ─── Image Lazy Loading & Drive API Fetcher ───
@@ -1838,7 +1833,6 @@ function renderAll(){
   renderCopies();
   renderBoard();
   renderDetailPages();
-  updatePdpAiStatus();
   updateBulkToolbars();
   updateDriveUi();
   updateAiClassificationStats();
@@ -2024,13 +2018,6 @@ function cardNode(it,index=0){
   editBtn.onclick=(e)=>{ e.stopPropagation(); startInlineTitleEdit(it.id,titleEl); };
   card.appendChild(info);
   
-  if(isDetailPageItem(it)){
-    const status=pdpAiStatus(it);
-    const ai=document.createElement('span');ai.className=`pdp-ai-card-status pdp-ai-${status}`;
-    ai.textContent=PDP_AI_LABELS[status];
-    ai.title=it.detailPage?.pdpAi?.reason|| (status==='manual'?'직접 분류 대상':'');
-    card.append(ai);
-  }
   const badge=document.createElement('div'); badge.className='card-type-badge'; 
   badge.textContent=it.type==='video'?'VIDEO':it.type==='carousel'?`CAROUSEL · ${(it.carousel||[]).length}`:it.type==='link'?'LINK':'IMAGE'; 
   card.appendChild(badge);
@@ -2824,8 +2811,7 @@ function detailPageEditorHTML(it){
   const checkTags=(name,values,chosen)=>`<div id="pdp-${name}" class="pdp-tag-list">${values.map(v=>`<label class="pdp-check"><input type="checkbox" value="${esc(v)}" ${chosen.includes(v)?'checked':''}><span>${esc(v)}</span></label>`).join('')}</div>`;
   return `
     ${it.type==='carousel'?carouselThumbStrip(it):''}
-    <div class="pdp-editor-heading"><strong>상세페이지 소구 분석</strong><span>${!isPdpAutoImageItem(it)?'영상·링크 자료는 직접 분류합니다. AI 자동분류 대상이 아닙니다.':'이미지는 AI 분류 가능 · 직접 확인한 요소만 기록합니다.'} 기존 자료와 미디어 원본은 그대로 유지됩니다.</span></div>
-    ${pdpAiDetailHTML(it)}
+    <div class="pdp-editor-heading"><strong>상세페이지 소구 분석</strong><span>제품 카테고리·소구 포인트·페이지 구성 요소를 정리하세요. 기존 자료와 미디어 원본은 그대로 유지됩니다.</span></div>
     <div class="form-row"><label class="form-label">제목</label><input id="detail-edit-title" class="detail-input" value="${esc(it.title||'')}"></div>
     <div class="form-row"><label class="form-label">브랜드</label><input id="detail-edit-brand" class="detail-input" value="${esc(it.brand||'')}"></div>
     <div class="form-row"><label class="form-label">제품 카테고리</label><input id="pdp-product-category" class="detail-input" list="pdp-category-suggestions" value="${esc(p.productCategory)}" placeholder="예: 주방세제 · 직접 입력 가능"><datalist id="pdp-category-suggestions">${presetCats.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist></div>
@@ -2925,16 +2911,15 @@ function renderDetailPageCandidates(){
   $('pdp-candidate-count').textContent=String(found.length);
 }
 function resetPdpFilters(){
-  ['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-ai-filter','pdp-media-filter','pdp-search'].forEach(id=>{if($(id))$(id).value='';});
+  ['pdp-category-filter','pdp-appeal-filter','pdp-section-filter','pdp-classification-filter','pdp-media-filter','pdp-search'].forEach(id=>{if($(id))$(id).value='';});
   renderDetailPages();
 }
 function getFilteredDetailPageItems(){
   const q=($('pdp-search')?.value||'').trim().toLocaleLowerCase();
   const cat=$('pdp-category-filter')?.value||'', appeal=$('pdp-appeal-filter')?.value||'',
     section=$('pdp-section-filter')?.value||'',status=$('pdp-classification-filter')?.value||'',
-    media=$('pdp-media-filter')?.value||'',aiFilter=$('pdp-ai-filter')?.value||'';
+    media=$('pdp-media-filter')?.value||'';
   return detailPageItems().filter(it=>{
-    if(aiFilter&&pdpAiStatus(it)!==aiFilter)return false;
     if(media&&it.type!==media)return false;
     const p=normalizeDetailPage(it.detailPage);
     if(cat&&p.productCategory!==cat)return false;
@@ -2946,31 +2931,11 @@ function getFilteredDetailPageItems(){
     return !q||[it.title,it.brand,it.sourceUrl,it.notes,p.productCategory,p.heroCopy,p.structureNote,...p.appeals,...p.sections,...p.appealEntries.flatMap(e=>[e.type,e.copy,e.evidence])].join(' ').toLocaleLowerCase().includes(q);
   }).sort((a,b)=>(Number(b.ts)||0)-(Number(a.ts)||0));
 }
-function setPdpAiFilter(value){
-  const control=$('pdp-ai-filter');if(!control)return;
-  control.value=control.value===value?'':value;
-  renderDetailPages();
-}
-function updatePdpAiStatus(){
-  const ps=detailPageItems(),counts={pending:0,processing:0,done:0,retry:0,review:0,error:0,skipped:0,manual:0};
-  ps.forEach(it=>{const state=pdpAiStatus(it);counts[state]=(counts[state]||0)+1;});
-  const eligible=ps.length-counts.manual,completed=counts.done;
-  const percent=eligible?Math.round(completed/eligible*100):0;
-  const el=$('pdp-ai-status');if(el)el.textContent=`AI 분석 가능 이미지 ${eligible}개 중 완료 ${completed}개 · 영상·기타 수동 ${counts.manual}개`;
-  const progress=document.querySelector('.pdp-ai-progress');if(progress)progress.setAttribute('aria-valuenow',String(percent));
-  const fill=$('pdp-ai-progress-fill');if(fill)fill.style.width=percent+'%';
-  const stat=$('pdp-ai-stats');
-  if(stat){
-    const keys=['done','pending','processing','retry','review','error','skipped','manual'];
-    stat.innerHTML=keys.map(key=>`<button type="button" class="pdp-ai-stat pdp-ai-stat-${key}${$('pdp-ai-filter')?.value===key?' active':''}" onclick="setPdpAiFilter('${key}')" aria-pressed="${$('pdp-ai-filter')?.value===key}"><span>${PDP_AI_LABELS[key]}</span><strong>${counts[key]}</strong></button>`).join('');
-  }
-}
 function renderDetailPages(){
   const root=$('pdp-board');if(!root)return;
   const pages=detailPageItems();
   const nav=$('pdp-nav-count');if(nav)nav.textContent=String(pages.length);
   const total=$('pdp-total');if(total)total.textContent=`${pages.length}개`;
-  updatePdpAiStatus();
   // 별도 상세페이지 탭이 열렸을 때만 미디어 카드 DOM을 구성해 불필요한 Drive 요청을 방지합니다.
   if(collectionPage!=='detailPages')return;
   renderDetailPageFilters();

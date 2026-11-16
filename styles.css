@@ -1496,3 +1496,13 @@ body{font-size:13px;}
 .pdp-ai-detail p.pdp-ai-detail-tip{font-size:10px;margin:7px 0 0}
 @media(max-width:1100px){.pdp-ai-stats{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:768px){.pdp-ai-overview{padding:12px}.pdp-ai-stats{grid-template-columns:repeat(3,minmax(0,1fr))}.pdp-ai-stat strong{font-size:18px}}
+
+/* 2026-11-13 · PDP: display only the two requested AI controls.
+   AI processing, retry, and result data remain active in app.js and Drive. */
+.pdp-ai-toolbar{
+  display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;
+  padding:10px 0 12px;margin-bottom:6px;
+  border-bottom:1px solid var(--glass-border);
+}
+.pdp-ai-toolbar .tb-btn{font-size:12px}
+@media(max-width:480px){.pdp-ai-toolbar{justify-content:flex-end}.pdp-ai-toolbar .tb-btn{padding:8px 11px}}
