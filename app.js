@@ -433,41 +433,53 @@ function pdpAiStatus(it){
 }
 const PDP_AI_LABELS={pending:'분석 대기',processing:'분석 중',done:'AI 완료',retry:'재시도 예정',review:'확인 필요',error:'분석 실패',skipped:'분석 제외',manual:'수동 분류'};
 let pdpAiLastSync='';
+function pdpClassificationSnapshot(it){
+  const p=normalizeDetailPage(it?.detailPage);
+  return JSON.stringify({productCategory:p.productCategory,appeals:[...p.appeals].sort(),sections:[...p.sections].sort(),heroCopy:p.heroCopy,structureNote:p.structureNote,
+    appealEntries:p.appealEntries.map(e=>({type:e.type,copy:e.copy,evidence:e.evidence})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))});
+}
 function pdpAiSuggestionApply(item,suggested,analyzedAt){
+  if(!suggested||typeof suggested!=='object')return false;
+  const before=pdpClassificationSnapshot(item);
   const p=normalizeDetailPage(item.detailPage);
-  if(!suggested||typeof suggested!=='object')return;
-  // 사용자가 AI 결과 이후 상세페이지를 직접 편집했다면 AI 정보만 보존하고 입력값은 건드리지 않습니다.
   const manualTime=Date.parse(p.manualEditedAt||'')||0;
-  if(manualTime&&(Date.parse(analyzedAt||'')||0)<=manualTime)return;
-  if(!p.productCategory)p.productCategory=String(suggested.productCategory||'');
-  p.appeals=[...new Set([...p.appeals,...(Array.isArray(suggested.appeals)?suggested.appeals:[])])];
-  p.sections=[...new Set([...p.sections,...(Array.isArray(suggested.sections)?suggested.sections:[])])];
-  if(!p.heroCopy)p.heroCopy=String(suggested.heroCopy||'');
-  if(!p.structureNote)p.structureNote=String(suggested.structureNote||'');
-  for(const e of Array.isArray(suggested.appealEntries)?suggested.appealEntries:[]){
-    if(!e||(!e.copy&&!e.evidence))continue;
-    if(!p.appealEntries.some(x=>x.type===e.type&&x.copy===e.copy))p.appealEntries.push({id:uid('pe'),type:String(e.type||''),copy:String(e.copy||''),evidence:String(e.evidence||'')});
+  const analysisTime=Date.parse(analyzedAt||'')||0;
+  // 사용자 편집이 AI 결과보다 나중이라면, 사용자가 선택 취소한 태그를 다시 추가하지 않습니다.
+  // 비어 있는 필드만 안전하게 채울 수 있는지 검사합니다.
+  const protectedEdits=!!manualTime&&manualTime>=analysisTime;
+  if(!p.productCategory&&!protectedEdits)p.productCategory=String(suggested.productCategory||'');
+  if(!protectedEdits){
+    p.appeals=[...new Set([...p.appeals,...(Array.isArray(suggested.appeals)?suggested.appeals.filter(x=>PDP_APPEALS.includes(x)):[])])];
+    p.sections=[...new Set([...p.sections,...(Array.isArray(suggested.sections)?suggested.sections.filter(x=>PDP_SECTIONS.includes(x)):[])])];
+    if(!p.heroCopy)p.heroCopy=String(suggested.heroCopy||'');
+    if(!p.structureNote)p.structureNote=String(suggested.structureNote||'');
+    for(const e of Array.isArray(suggested.appealEntries)?suggested.appealEntries:[]){
+      if(!e||(!e.copy&&!e.evidence)||!PDP_APPEALS.includes(e.type))continue;
+      if(!p.appealEntries.some(x=>x.type===e.type&&x.copy===e.copy))p.appealEntries.push({id:uid('pe'),type:e.type,copy:String(e.copy||''),evidence:String(e.evidence||'')});
+    }
   }
   item.detailPage=p;
+  return before!==pdpClassificationSnapshot(item);
 }
-// 사용자 수동 입력을 보존하면서 Drive의 AI 기록만 최신화합니다.
+// Drive의 AI 상태와 실제 소구 필드 갱신은 서로 다릅니다.
+// 기존 AI 상태가 같더라도 누락된 소구 데이터는 재반영할 수 있도록 합니다.
 function mergePdpAiFromDrive(remoteItems){
   const incoming=new Map((remoteItems||[]).filter(it=>it&&it.id).map(it=>[it.id,it]));
   let updated=0;
   for(const it of items){
-    const remote=incoming.get(it.id), ai=remote?.detailPage?.pdpAi;
+    const remote=incoming.get(it.id),ai=remote?.detailPage?.pdpAi;
     if(!remote||!ai||!isDetailPageItem(it)||!isPdpAutoImageItem(it))continue;
     const current=it.detailPage?.pdpAi||{};
     const localRequest=Date.parse(current.requestedAt||'')||0;
     const remoteTime=Date.parse(ai.analyzedAt||ai.requestedAt||'')||0;
-    if(current.status==='pending' && localRequest>remoteTime)continue; // 로컬에서 새로 요청한 재분류를 덮어쓰지 않습니다.
+    if(current.status==='pending'&&localRequest>remoteTime)continue;
     const currentTime=Date.parse(current.analyzedAt||current.requestedAt||'')||0;
     if(remoteTime<currentTime)continue;
-    if(remoteTime===currentTime && JSON.stringify(ai)===JSON.stringify(current))continue;
     if(!it.detailPage)it.detailPage=normalizeDetailPage({});
-    if(ai.status==='done')pdpAiSuggestionApply(it,ai.suggested,ai.analyzedAt);
-    it.detailPage.pdpAi={...ai};
-    updated++;
+    const changedContent=ai.status==='done'?pdpAiSuggestionApply(it,ai.suggested,ai.analyzedAt):false;
+    const changedStatus=JSON.stringify(it.detailPage.pdpAi||{})!==JSON.stringify(ai);
+    if(changedStatus)it.detailPage.pdpAi={...ai};
+    if(changedContent||changedStatus)updated++;
   }
   return updated;
 }
@@ -518,30 +530,87 @@ function pdpHasUnsavedEditorChanges(){
     sorted(draft.appeals)!==sorted(p.appeals)||sorted(draft.sections)!==sorted(p.sections)||
     JSON.stringify(draft.appealEntries)!==JSON.stringify(p.appealEntries);
 }
+function pdpSyncFeedback(message,tone='info'){
+  const el=$('pdp-sync-feedback');
+  if(!el)return;
+  el.textContent=String(message||'');
+  el.hidden=!message;
+  el.dataset.tone=tone;
+}
+function pdpSyncRemoteSummary(snapshot){
+  const remote=snapshot.items||[];
+  const matched=remote.filter(x=>items.some(it=>it.id===x.id&&isDetailPageItem(it)&&isPdpAutoImageItem(it)));
+  const done=matched.filter(x=>x.detailPage?.pdpAi?.status==='done');
+  const waiting=matched.filter(x=>['pending','processing','retry'].includes(x.detailPage?.pdpAi?.status));
+  const failed=matched.filter(x=>['error','skipped','review'].includes(x.detailPage?.pdpAi?.status));
+  return {remote:remote.length,matched:matched.length,done:done.length,waiting:waiting.length,failed:failed.length};
+}
 async function syncPdpAiClassificationResults(){
-  if(pdpHasUnsavedEditorChanges()){showToast('상세페이지에 입력 중인 내용을 먼저 수정 저장해 주세요.','error');return false;}
-  if(aiSyncBusy||driveSaveBusy||copyDriveLoading){showToast('다른 Drive 작업이 진행 중입니다.','error');return false;}
-  const button=$('pdp-sync-ai-btn'),note=$('pdp-ai-sync-note');
-  aiSyncBusy=true;if(button){button.disabled=true;button.textContent='결과 확인 중…';}
-  if(note)note.textContent='Drive의 상세페이지 AI 기록을 확인하고 있습니다. 수동 메모와 카피는 유지됩니다.';
+  if(pdpHasUnsavedEditorChanges()){
+    const message='입력 중인 상세페이지를 먼저 ‘수정 저장’해 주세요. 입력 내용이 덮어써지지 않도록 가져오기를 중단했습니다.';
+    pdpSyncFeedback(message,'error');showToast(message,'error');return false;
+  }
+  if(aiSyncBusy||driveSaveBusy||copyDriveLoading){
+    pdpSyncFeedback('다른 Drive 저장·불러오기 작업이 진행 중입니다. 완료 후 다시 눌러주세요.','error');return false;
+  }
+  const button=$('pdp-sync-ai-btn');
+  aiSyncBusy=true;
+  if(button){button.disabled=true;button.textContent='결과 확인 중…';}
+  pdpSyncFeedback('Google Drive에서 상세페이지 AI 결과를 확인하고 있습니다…');
   try{
     const snapshot=await getPdpDriveAnalysisSnapshot();
-    const remote=snapshot.items;
-    const count=mergePdpAiFromDrive(remote);
-    if(count)saveLocal(); // 이미 Drive에 저장된 분석 결과이므로 수동 Drive 저장 플래그를 추가하지 않습니다.
+    const summary=pdpSyncRemoteSummary(snapshot);
+    if(!snapshot.sidecarFileId&&!snapshot.legacyCount){
+      const message='상세페이지 AI 결과 파일이 없습니다. Apps Script에서 pdpClassifyNextBatch를 실제 실행하고 완료된 뒤 다시 눌러주세요. (pdpCheckSetup은 연결 진단만 합니다.)';
+      pdpSyncFeedback(message,'error');showToast('분석 결과 파일을 찾지 못했습니다.','error');return false;
+    }
+    if(snapshot.sidecarFileId&&snapshot.sidecarCount===0&&!snapshot.legacyCount){
+      const message='상세페이지 AI 결과 파일은 있지만 분석 기록이 비어 있습니다. Apps Script의 pdpClassifyNextBatch 실행 로그를 확인해 주세요.';
+      pdpSyncFeedback(message,'error');return false;
+    }
+    if(!summary.matched){
+      const message=`Drive에 AI 기록 ${summary.remote}건이 있지만 현재 상세페이지와 일치하는 ID가 없습니다. 사이트 상단 ‘Drive에 저장’ 후 양쪽에서 같은 refboard-data.json을 사용하는지 확인해 주세요.`;
+      pdpSyncFeedback(message,'error');console.warn('상세페이지 AI 기록 ID 불일치:',{sourceDataFileId:snapshot.sourceDataFileId,sidecarFileId:snapshot.sidecarFileId,remote:summary.remote,localDetail:detailPageItems().length});return false;
+    }
+    const before=new Map(items.filter(it=>isDetailPageItem(it)).map(it=>[it.id,pdpClassificationSnapshot(it)]));
+    const changed=mergePdpAiFromDrive(snapshot.items);
+    const applied=items.filter(it=>before.has(it.id)&&before.get(it.id)!==pdpClassificationSnapshot(it)).length;
+    if(changed){
+      saveLocal();
+      // AI 결과는 전용 Drive JSON에 이미 있으나, 소구 필드의 로컬 병합분은
+      // 기존 정책대로 사용자가 'Drive에 저장'을 눌러 일반 JSON에 반영합니다.
+      if(applied)setManualDrivePending(true);
+    }
     pdpAiLastSync=new Date().toISOString();
     renderDetailPages();
-    if(selectedId && collectionPage==='detailPages' && $('detail-panel')?.classList.contains('open'))renderDetail();
-    const matched=remote.filter(x=>items.some(it=>it.id===x.id && isDetailPageItem(it) && isPdpAutoImageItem(it)));
-    // AI 분류 현황 및 상태 수치는 화면에 노출하지 않습니다. 실행 결과만 간단히 알립니다.
-    console.info('상세페이지 AI 결과 반영:', {remoteRecords:remote.length,matchingItems:matched.length,updated:count,usingSeparateFile:!!snapshot.sidecarFileId});
-    if(count)showToast(`상세페이지 결과 ${count}건 반영 완료`,'success');
-    else if(!remote.length)showToast('반영할 AI 결과가 없습니다. Apps Script 실행 결과를 확인하세요.','error');
-    else if(!matched.length)showToast('현재 상세페이지와 일치하는 분석 결과가 없습니다.','error');
-    else showToast('이미 최신 결과가 반영되어 있습니다.','success');
+    if(selectedId&&collectionPage==='detailPages'&&$('detail-panel')?.classList.contains('open'))renderDetail();
+    console.info('상세페이지 AI 결과 반영:',{sourceDataFileId:snapshot.sourceDataFileId,sidecarFileId:snapshot.sidecarFileId,sourceAIRecords:summary.remote,matchedAIRecords:summary.matched,completedAIRecords:summary.done,updatedRecords:changed,appliedClassification:applied,otherResults:summary.failed,unfinished:summary.waiting});
+    let message='',tone='success';
+    if(applied){
+      message=`상세페이지 ${applied}건에 제품 카테고리·소구 분석을 반영했습니다. (AI 기록 갱신 ${changed}건) · 다른 기기에도 유지하려면 상단 ‘Drive에 저장’을 눌러 주세요.`;
+    }else if(!summary.done){
+      message='Drive 연결은 정상이며 AI 기록을 찾았지만, 아직 소구 분류가 완료된 이미지가 없습니다. Apps Script에서 pdpClassifyNextBatch를 실행해 완료 결과가 생성되는지 확인해 주세요. 연결 진단(pdpCheckSetup)만 실행해서는 분석되지 않습니다.';
+      tone='warning';
+    }else if(changed){
+      message=`AI 기록 ${changed}건을 불러왔지만 상세페이지 소구 필드는 변경되지 않았습니다. 기존 수동 편집이 더 최신이거나 AI 결과에 확인 가능한 소구가 없을 수 있습니다.`;
+      tone='warning';
+    }else{
+      message=`완료된 AI 기록 ${summary.done}건을 확인했습니다. 이미 반영된 내용이거나 사용자 수동 편집이 더 최신이라 변경할 항목이 없습니다.`;
+    }
+    pdpSyncFeedback(message,tone);
+    showToast(applied?`${applied}건 소구 반영 완료`:summary.done?'AI 결과 확인 완료':'완료된 AI 분석 없음',applied?'success':'');
     return true;
-  }catch(e){if(note)note.textContent='AI 결과 반영 실패: '+String(e.message||e);showToast('AI 결과를 가져오지 못했습니다.','error');return false;}
-  finally{aiSyncBusy=false;if(button){button.disabled=false;button.textContent='결과 반영';}}
+  }catch(e){
+    console.error('상세페이지 AI 결과 반영 실패:',e);
+    let message=String(e?.message||e||'알 수 없는 오류');
+    if(/OAuth|Token|401|403|권한/i.test(message))message+=' · 상단 Google 연결을 다시 실행해 주세요.';
+    pdpSyncFeedback('결과 반영 실패: '+message,'error');
+    showToast('상세페이지 AI 결과 반영에 실패했습니다.','error');
+    return false;
+  }finally{
+    aiSyncBusy=false;
+    if(button){button.disabled=false;button.textContent='결과 반영';}
+  }
 }
 function requestPdpReclassification(id){
   const it=items.find(x=>x.id===id);if(!it||!isDetailPageItem(it)||!isPdpAutoImageItem(it))return;

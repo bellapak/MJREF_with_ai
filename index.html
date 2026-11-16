@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>레퍼런스 탐색기</title>
-<link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="./styles.css?v=20261116-pdp-sync">
 <!-- Google Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -207,6 +207,7 @@
       <button type="button" class="tb-btn" onclick="openAiScriptConsole()">Apps Script 열기</button>
       <button type="button" class="tb-btn primary" id="pdp-sync-ai-btn" onclick="syncPdpAiClassificationResults()">결과 반영</button>
     </section>
+    <p id="pdp-sync-feedback" class="pdp-sync-feedback" role="status" aria-live="polite" aria-atomic="true" hidden></p>
     <div class="pdp-search-row"><input type="search" id="pdp-search" placeholder="브랜드·제품·소구·카피 검색" aria-label="상세페이지 검색" oninput="renderDetailPages()"><span id="pdp-visible">0개 표시</span></div>
     <details id="pdp-candidates" class="pdp-candidates" hidden><summary>분류 확인이 필요한 기존 자료 <span id="pdp-candidate-count">0</span></summary><p>‘랜딩/상세페이지’처럼 두 용도가 합쳐진 기존 카테고리는 자동으로 이동하지 않았습니다. 상세페이지만 선택해 주세요.</p><div id="pdp-candidate-list"></div></details>
     <div id="pdp-board-scroll"><div id="pdp-bulk-toolbar" class="ref-bulk-toolbar" hidden></div><div id="pdp-board" class="grid-view"></div></div>
@@ -333,6 +334,6 @@
   aria-hidden="true"></div>
 
 
-<script src="./app.js"></script>
+<script src="./app.js?v=20261116-pdp-sync"></script>
 </body>
 </html>

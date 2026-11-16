@@ -1506,3 +1506,10 @@ body{font-size:13px;}
 }
 .pdp-ai-toolbar .tb-btn{font-size:12px}
 @media(max-width:480px){.pdp-ai-toolbar{justify-content:flex-end}.pdp-ai-toolbar .tb-btn{padding:8px 11px}}
+
+/* 상세페이지 AI 결과 가져오기: 버튼 두 개만 상시 노출, 누른 뒤에만 성공/실패 메시지 표시 */
+.pdp-sync-feedback{margin:0 0 12px;padding:10px 13px;border-radius:10px;border:1px solid #d9e5f7;background:#f7faff;color:#40506a;font-size:12px;line-height:1.65;word-break:keep-all}
+.pdp-sync-feedback[hidden]{display:none!important}
+.pdp-sync-feedback[data-tone="error"]{border-color:#f5cac9;background:#fff8f7;color:#9e3030}
+.pdp-sync-feedback[data-tone="warning"]{border-color:#f0dcad;background:#fffaf0;color:#80601e}
+.pdp-sync-feedback[data-tone="success"]{border-color:#cbe9d2;background:#f4fbf6;color:#276540}
