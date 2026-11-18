@@ -1522,3 +1522,18 @@ body{font-size:13px;}
 .area-nav-unassigned .area-nav-code{color:#a46a16}
 .area-nav-extra{background:rgba(120,120,140,.04)}
 .area-nav-item small{font-variant-numeric:tabular-nums;font-size:10px;font-weight:700}
+
+
+/* 2026-11-18 저장 여부와 실패 원인을 유지하는 알림 */
+.storage-feedback[hidden],.storage-feedback button[hidden]{display:none!important}
+.storage-feedback{position:fixed;right:18px;bottom:18px;z-index:500;display:flex;align-items:center;gap:10px;
+  max-width:min(540px,calc(100vw - 30px));padding:11px 14px;border:1px solid #c8d6ee;
+  border-radius:12px;background:#f7faff;color:#25344a;box-shadow:0 10px 34px rgba(20,35,60,.18);
+  font:500 12px/1.5 var(--fn);overflow-wrap:anywhere}
+.storage-feedback[data-tone=error]{background:#fff7f6;border-color:#ffb1ab;color:#9b2d26}
+.storage-feedback[data-tone=warning]{background:#fffaf0;border-color:#edce87;color:#835410}
+.storage-feedback>span{flex:1;min-width:0}
+.storage-feedback>button{font:650 11px var(--fn);padding:6px 9px;border:1px solid currentColor;
+  border-radius:8px;background:transparent;color:inherit;cursor:pointer;white-space:nowrap}
+.storage-feedback .storage-feedback-close{padding:3px 7px;font-size:15px;border:0}
+@media(max-width:600px){.storage-feedback{left:12px;right:12px;bottom:12px;flex-wrap:wrap}}

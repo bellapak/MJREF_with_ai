@@ -780,45 +780,73 @@ function hasMediaReference(media){
   return !!(media && (media._file || media.previewSrc || media.localBlobKey || media.driveFileId || media.src || isDirectMediaUrl(media.sourceUrl)));
 }
 
+// 이전 구현은 원본 링크가 잠시 보이지 않으면 레코드 자체를 삭제했습니다.
+// 미디어 로딩 문제와 데이터 삭제는 구분해야 하므로, 복구만 수행하고 자동 삭제는 하지 않습니다.
 function repairAndPruneMediaItems(){
-  let linked=0, removed=0;
-  const repaired=[];
-  for(const raw of items){
+  let linked=0,missing=0;
+  items=items.map(raw=>{
     const it=normalizeItem(raw);
-    if(!it.src && isDirectMediaUrl(it.sourceUrl)){ it.src=it.sourceUrl; linked++; }
+    if(!it.src&&isDirectMediaUrl(it.sourceUrl)){it.src=it.sourceUrl;linked++;}
     if(!it.driveFileId){
       const driveId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl);
-      if(driveId){ it.driveFileId=driveId; linked++; }
+      if(driveId){it.driveFileId=driveId;linked++;}
     }
-
     if(it.type==='carousel'){
-      const before=it.carousel.length;
-      it.carousel=it.carousel.map(normalizeMediaRef).filter(hasMediaReference);
-      removed+=before-it.carousel.length;
-      if(!it.carousel.length){ removed++; continue; }
-    }else if(it.type==='image' || it.type==='video'){
-      if(!hasMediaReference(it)){ removed++; continue; }
-    }else if(it.type==='link'){
-      if(!it.sourceUrl && !it.src){ removed++; continue; }
-      if(!it.sourceUrl && it.src) it.sourceUrl=it.src;
-    }
-    repaired.push(it);
-  }
-  items=repaired;
+      it.carousel=(it.carousel||[]).map(normalizeMediaRef); // 누락된 슬라이드도 메타데이터를 보존
+      if(!it.carousel.length||it.carousel.some(sl=>!hasMediaReference(sl)))missing++;
+    }else if((it.type==='image'||it.type==='video')&&!hasMediaReference(it))missing++;
+    else if(it.type==='link'&&!it.sourceUrl&&!it.src)missing++;
+    if(it.type==='link'&&!it.sourceUrl&&it.src)it.sourceUrl=it.src;
+    return it;
+  });
   state={groups,categories,items};
-  return {linked,removed};
+  if(missing)console.warn('미디어 연결 누락 '+missing+'건 · 콘텐츠는 삭제하지 않고 보존했습니다.');
+  return {linked,removed:0,missing};
 }
 
 // 브라우저에는 자동 저장하지만, Google Drive에는 사용자가 버튼을 누를 때만 저장합니다.
 function isManualDrivePending(){ return localStorage.getItem(MANUAL_DRIVE_DIRTY_KEY)==='1'; }
 function setManualDrivePending(pending){
-  if(pending) localStorage.setItem(MANUAL_DRIVE_DIRTY_KEY,'1');
-  else localStorage.removeItem(MANUAL_DRIVE_DIRTY_KEY);
+  try{
+    if(pending) localStorage.setItem(MANUAL_DRIVE_DIRTY_KEY,'1');
+    else localStorage.removeItem(MANUAL_DRIVE_DIRTY_KEY);
+  }catch(error){
+    console.warn('Drive 미저장 표시 저장 실패:',error);
+    showStorageFeedback('브라우저 저장 공간 부족: Drive 저장 필요 표시를 기록하지 못했습니다. 새로고침 전에 Drive에 저장하거나 JSON 백업을 받아 주세요.','error');
+  }
   updateDriveUi();
+}
+function showStorageFeedback(message,tone='info'){
+  const el=$('storage-feedback');if(!el)return;
+  el.hidden=!message;
+  el.dataset.tone=tone;
+  const messageEl=$('storage-feedback-message');if(messageEl)messageEl.textContent=String(message||'');
+  const backup=$('storage-feedback-backup');if(backup)backup.hidden=tone!=='error';
+}
+function describeStorageError(error){
+  const message=String(error?.message||error||'알 수 없는 오류');
+  if(error?.name==='QuotaExceededError'||/quota|용량|storage full|exceed/i.test(message))
+    return '브라우저 저장 공간이 부족합니다. 새로고침하지 말고 Drive에 저장하거나 JSON 백업을 받아 주세요.';
+  if(/IndexedDB|IDB|database|transaction/i.test(message))
+    return '원본 미디어를 브라우저에 보관하지 못했습니다. 새로고침 전에 Drive에 저장하거나 원본 파일을 별도 보관해 주세요. ('+message.slice(0,120)+')';
+  return '브라우저 저장 실패: '+message.slice(0,180);
+}
+// 현재 메모리의 메타데이터를 긴급 백업합니다. 아직 Drive로 전송하지 않은 원본 파일은 포함되지 않습니다.
+function downloadEmergencyJsonBackup(){
+  try{
+    const blob=new Blob([JSON.stringify(makePersistableState(),null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download='MJREF_긴급백업_'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    showStorageFeedback('JSON 메타데이터 백업을 준비했습니다. 아직 업로드되지 않은 이미지·영상 원본은 별도로 보관해야 합니다.','error');
+  }catch(error){showStorageFeedback('백업 생성 실패: '+String(error?.message||error),'error');}
 }
 function updateAutosave(mode){
   const el=$('autosave-indicator');
-  if(el){ el.style.color=mode==='saving'?'var(--orange)':'var(--green)'; el.title=mode==='saving'?'브라우저에 저장 중':'브라우저 로컬 저장 완료 (Google Drive는 수동 저장)'; }
+  if(el){ el.style.color=mode==='saving'?'var(--orange)':mode==='error'?'var(--red)':'var(--green)'; el.title=mode==='saving'?'브라우저에 저장 중':mode==='error'?'브라우저 저장 실패 · 하단 안내 확인':'브라우저 로컬 저장 완료 (Google Drive는 수동 저장)'; }
 }
 function loadLocal(){
   try{
@@ -844,16 +872,33 @@ function makePersistableState(){
 }
 
 function saveLocal(){
-  localStorage.setItem(LS_KEY, JSON.stringify(makePersistableState()));
+  // 실제 저장 실패를 성공으로 표시하지 않습니다. 예전 데이터는 setItem 실패 시 그대로 남습니다.
+  const serialized=JSON.stringify(makePersistableState());
+  localStorage.setItem(LS_KEY,serialized);
+  if(localStorage.getItem(LS_KEY)!==serialized)throw new Error('브라우저에 저장된 값을 다시 확인하지 못했습니다.');
   updateAutosave('saved');
+  return true;
 }
 
 async function saveData(){
   updateAutosave('saving');
-  const localCachePromise=cachePendingLocalFiles().catch(console.warn);
-  saveLocal();
-  setManualDrivePending(true); // 변경사항은 로컬에 보관하고, Drive 저장은 실행하지 않음
-  await localCachePromise;
+  try{
+    // 원본 파일이 IndexedDB에 저장되지 않았다면 메타데이터만 성공했다고 표시하지 않습니다.
+    const cached=await cachePendingLocalFiles();
+    const failure=cached.find(x=>x.status==='rejected');
+    if(failure)throw new Error('IndexedDB 원본 미디어 저장 실패: '+String(failure.reason?.message||failure.reason));
+    saveLocal();
+    setManualDrivePending(true); // 브라우저 저장과 Drive 저장은 분리됩니다.
+    showStorageFeedback('브라우저 저장 완료 · 다른 기기에서도 보려면 상단 ‘Drive에 저장’을 눌러 주세요.','success');
+    return true;
+  }catch(error){
+    updateAutosave('error');
+    const message=describeStorageError(error);
+    console.error('MJREF 브라우저 저장 실패:',error);
+    showStorageFeedback(message,'error');
+    showToast('브라우저 저장 실패 · 아래 안내를 확인하세요.','error');
+    return false;
+  }
 }
 
 // ─── Google Drive Auth ───
@@ -1147,13 +1192,18 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
 
 async function uploadDataFile(){
   const folderId=await ensureDriveFolder();
-  const safeState=makePersistableState();
-  const blob=new Blob([JSON.stringify(safeState,null,2)],{type:'application/json'});
+  const serialized=JSON.stringify(makePersistableState(),null,2);
+  const blob=new Blob([serialized],{type:'application/json'});
   if(gdriveDataFileId){
     await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveDataFileId}?uploadType=media`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:blob});
   }else{
-    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId); gdriveDataFileId=f.id;
+    const f=await uploadBlobToDrive(blob,DRIVE_DATA_FILE_NAME,'application/json',folderId);gdriveDataFileId=f.id;
   }
+  if(!gdriveDataFileId)throw new Error('Google Drive가 데이터 파일 ID를 반환하지 않았습니다.');
+  // HTTP 성공 응답뿐 아니라 실제 Drive에 저장된 JSON을 다시 조회해 확인합니다.
+  const checked=await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(gdriveDataFileId)}?alt=media`,{cache:'no-store'});
+  if((await checked.text())!==serialized)throw new Error('Drive 저장 후 재확인에서 데이터가 일치하지 않습니다. 동시 저장이 있었는지 확인해 주세요.');
+  return true;
 }
 
 // 새로고침 전후 모두 로컬 IndexedDB에서 원본 파일을 복구해 Drive에 저장합니다.
@@ -1164,8 +1214,20 @@ async function saveToDrive(silent=false){
   driveSaveBusy=true;
   let currentMedia='';
   let completed=0;
+  let aiMergeWarning='';
+  let localSaveWarning='';
+  const saveLocalBestEffort=()=>{
+    try{saveLocal();return true;}catch(error){
+      localSaveWarning=describeStorageError(error);
+      console.warn('Drive 작업 중 브라우저 저장 실패:',error);
+      return false;
+    }
+  };
   try{
-    await cachePendingLocalFiles();
+    const localCacheResults=await cachePendingLocalFiles();
+    if(localCacheResults.some(x=>x.status==='rejected')){
+      console.warn('브라우저 원본 캐시 저장 실패 · Drive 원본 업로드는 계속 시도합니다.');
+    }
     await ensureDriveToken();
     await ensureDriveFolder();
 
@@ -1192,7 +1254,7 @@ async function saveToDrive(silent=false){
       delete media._file;
       completed++;
       // 부분 성공 상태를 즉시 로컬 저장하여 다음 재시도에서 중복 업로드 방지.
-      saveLocal();
+      saveLocalBestEffort();
     }
 
     // 아직 원본이 업로드되지 않은 미디어가 있으면 JSON만 먼저 저장하지 않습니다.
@@ -1209,8 +1271,15 @@ async function saveToDrive(silent=false){
     // Apps Script가 Drive에 쓴 AI 상태를 최신 기준으로 가져와, 로컬 저장이 결과를 되돌리지 않도록 합니다.
     const existing=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
     if(existing){
-      const snapshot=await getPdpDriveAnalysisSnapshot();
-      if(mergePdpAiFromDrive(snapshot.items))saveLocal();
+      gdriveDataFileId=existing.id; // 기존 파일이 있으면 반드시 UPDATE. 동일한 이름의 JSON 중복 생성을 방지.
+      try{
+        const snapshot=await getPdpDriveAnalysisSnapshot();
+        if(mergePdpAiFromDrive(snapshot.items))saveLocalBestEffort();
+      }catch(error){
+        // 상세페이지 AI 전용 JSON이 손상/미연결이어도 일반 레퍼런스 저장은 독립적으로 진행합니다.
+        aiMergeWarning=String(error?.message||error).slice(0,150);
+        console.warn('상세페이지 AI 결과 병합 생략 · 일반 레퍼런스 저장 계속:',error);
+      }
     }
     currentMedia='레퍼런스 목록(JSON)';
     await uploadDataFile();
@@ -1226,16 +1295,24 @@ async function saveToDrive(silent=false){
         return false;
       }
     }
-    saveLocal();
-    setManualDrivePending(false);
-    if(!silent)showToast(`Google Drive 저장 완료${completed?` · 미디어 ${completed}개 업로드`:''}`,'success');
+    saveLocalBestEffort();
+    setManualDrivePending(!!localSaveWarning);
+    const notes=[aiMergeWarning?'상세페이지 AI 결과 자동 병합을 건너뛰었습니다. 결과 반영 버튼에서 별도 확인해 주세요.':'',localSaveWarning].filter(Boolean);
+    if(notes.length){
+      showStorageFeedback('Drive 파일 저장·검증 완료. '+notes.join(' '),localSaveWarning?'error':'warning');
+      if(!silent)showToast('Drive 저장 완료 · 일부 추가 확인 필요','success');
+    }else{
+      showStorageFeedback('Google Drive 저장 및 재확인 완료 · 브라우저와 Drive에 모두 반영했습니다.','success');
+      if(!silent)showToast(`Google Drive 저장·검증 완료${completed?` · 미디어 ${completed}개 업로드`:''}`,'success');
+    }
     return true;
   }catch(e){
     console.error('Google Drive 수동 저장 실패:',{step:currentMedia,completed,error:e});
     setManualDrivePending(true);
     const prefix=currentMedia?`${currentMedia} 저장 실패`: 'Drive 저장 실패';
     const msg=e instanceof TypeError && /fetch/i.test(e.message)?'네트워크 연결 또는 Google Drive 요청 차단을 확인해 주세요.':(e.message||'알 수 없는 오류');
-    if(!silent)showToast(`${prefix}: ${msg}`,'error');
+    showStorageFeedback(`${prefix}: ${msg}`,'error');
+    if(!silent)showToast('Drive 저장 실패 · 하단 안내를 확인하세요.','error');
     return false;
   }finally{driveSaveBusy=false;}
 }
@@ -1280,25 +1357,9 @@ async function syncItemsWithDriveAssets(){
     }
   }
 
-  // 📎 완전히 동일한 파일(MD5 체크섬 일치)을 가리키는 아이템이 이미 2개 이상 있으면 하나로 병합.
-  // 예전 버전에서 업로드가 겹쳐 실행되어 같은 사진이 Drive에 2벌 저장된 경우를 자동으로 정리.
-  // 태그(catIds)는 합쳐서 보존하고, 나머지 항목만 제거함.
-  let merged=0;
-  {
-    const seenByMd5=new Map();
-    const toRemove=new Set();
-    items.forEach(it=>{
-      const md5=byId.get(it.driveFileId)?.md5Checksum;
-      if(!md5) return;
-      const keeper=seenByMd5.get(md5);
-      if(!keeper){ seenByMd5.set(md5,it); return; }
-      const mergedCats=new Set([...(keeper.catIds||[]),...(it.catIds||[])]);
-      keeper.catIds=[...mergedCats];
-      if(!keeper.caption && it.caption) keeper.caption=it.caption;
-      toRemove.add(it.id);
-    });
-    if(toRemove.size){ items=items.filter(it=>!toRemove.has(it.id)); merged=toRemove.size; }
-  }
+  // 서로 다른 ID의 콘텐츠가 같은 MD5를 갖더라도, 메모·태그·컬렉션이 다를 수 있습니다.
+  // 자동 삭제로 사용자의 저장 기록이 사라지는 것을 막기 위해 비파괴적으로 보존합니다.
+  const merged=0;
 
   const existing=new Set();
   const existingMd5=new Set();
@@ -1615,7 +1676,7 @@ async function saveLocalBlob(key,blob,meta={}){
       tx.oncomplete=resolve;
       tx.onerror=()=>reject(tx.error);
     });
-  }catch(e){ console.warn('로컬 미디어 캐시 저장 실패:', e); }
+  }catch(e){ console.warn('로컬 미디어 캐시 저장 실패:', e); throw e; }
 }
 
 async function getLocalBlob(key){
@@ -1758,21 +1819,9 @@ async function deleteDriveFile(fileId){
   try{ await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,{method:'DELETE'}); }
   catch(e){ console.warn('Drive delete failed:', fileId, e); throw e; }
 }
-function removeItemsThatAreCarouselSlides(){
-  const slideIds=new Set(); const slideNames=new Set();
-  items.forEach(it=>{
-    if(it.type==='carousel' && Array.isArray(it.carousel)){
-      it.carousel.forEach(s=>{ if(s.driveFileId) slideIds.add(s.driveFileId); if(s.fileName) slideNames.add(cleanFileBase(s.fileName)); if(s.title) slideNames.add(cleanFileBase(s.title)); });
-    }
-  });
-  items=items.filter(it=>{
-    if(it.type==='carousel') return true;
-    if(it.driveFileId && slideIds.has(it.driveFileId)) return false;
-    const n=cleanFileBase(it.fileName||it.title||'');
-    if(n && slideNames.has(n)) return false;
-    return true;
-  });
-}
+// 자동 이미지 파일명 중복 제거는 서로 다른 레퍼런스를 지울 수 있어 비활성화.
+// 캐러셀의 슬라이드와 같은 Drive 파일을 쓰더라도 별도 콘텐츠 레코드는 보존합니다.
+function removeItemsThatAreCarouselSlides(){return 0;}
 
 // 💡 데이터 누락 해결: 첫 번째 슬라이드의 텍스트 정보를 마스터 카드에 상속합니다.
 function buildCarouselGroupsFromLooseAssets(){
@@ -2500,8 +2549,17 @@ async function saveFromModal(){
   }else if(pendingFile){ items.push(fileToItem(pendingFile,base)); }
   else if(url){ items.push(normalizeItem({...base,src:url,type:guessType(url)})); }
   else { showToast('파일 또는 URL을 입력해주세요','error'); return; }
-  const created=items[items.length-1];if(created){inheritTitleFacets(created);if(!isEmptyClassification(created.facets))synchronizeTitleFacets(created);}
-  closeModal('add-modal'); await saveData(); renderAll();
+  const created=items[items.length-1];
+  const previousFacets=new Map(items.slice(0,-1).map(item=>[item.id,item.facets]));
+  if(created){inheritTitleFacets(created);if(!isEmptyClassification(created.facets))synchronizeTitleFacets(created);}
+  if(!(await saveData())){
+    // 저장 실패 시 추가 항목을 원상복구하고 입력 폼을 유지합니다.
+    items=items.filter(item=>item!==created);
+    items.forEach(item=>{if(previousFacets.has(item.id))item.facets=previousFacets.get(item.id);});
+    if(created)showStorageFeedback('새 콘텐츠를 저장하지 못해 등록을 취소했습니다. 입력창의 내용은 유지됩니다. '+($('storage-feedback-message')?.textContent||''),'error');
+    return;
+  }
+  closeModal('add-modal');renderAll();
 }
 
 function guessType(url){ const u=url.toLowerCase(); if(/\.(mp4|webm|mov|m4v)(\?|$)/.test(u))return'video'; if(/^https?:/.test(u)&&!/\.(png|jpe?g|gif|webp|svg)(\?|$)/.test(u))return'link'; return'image'; }
@@ -2533,6 +2591,7 @@ async function addQuickFiles(inputFiles, sourceType='quick_add'){
   const ignored=all.length-images.length-videos.length;
   if(!images.length&&!videos.length){showToast('이미지 또는 영상 파일만 추가할 수 있습니다.','error');return {carousel:0,single:0,ignored};}
 
+  const previousItemIds=new Set(items.map(x=>x.id));
   let carousel=0;
   if(images.length>=2){
     items.push(quickCarouselFromFiles(images,sourceType));
@@ -2542,7 +2601,10 @@ async function addQuickFiles(inputFiles, sourceType='quick_add'){
   }
   // 캐러셀은 이미지로만 구성합니다. 함께 드롭된 동영상은 개별 카드로 저장합니다.
   videos.forEach(file=>items.push(fileToItem(file,{sourceType})));
-  await saveData();
+  if(!(await saveData())){
+    items=items.filter(item=>previousItemIds.has(item.id));
+    return {carousel:0,single:0,ignored,error:'브라우저 저장 실패'};
+  }
   renderAll();
   const single=(images.length===1?1:0)+videos.length;
   const summary=[carousel?`이미지 ${images.length}장 → 캐러셀 1개`:'',single?`단일 파일 ${single}개`:'',ignored?`지원하지 않는 파일 ${ignored}개 제외`:''].filter(Boolean).join(' · ');
@@ -2875,7 +2937,7 @@ function handleDetailSaveKeydown(event){
   $('detail-save-btn')?.click();
 }
 
-function saveDetailEdits(){
+async function saveDetailEdits(){
   const it=items.find(i=>i.id===selectedId); if(!it)return;
   let socialMetrics;
   try{socialMetrics=$('detail-views')?collectSocialMetricInputs('detail',it.socialMetrics):it.socialMetrics;}catch(error){showToast(error.message,'error');return;}
@@ -2891,8 +2953,9 @@ function saveDetailEdits(){
   if(!it.driveFileId) it.driveFileId=extractGoogleDriveFileId(it.src)||extractGoogleDriveFileId(it.sourceUrl)||'';
 
   it.notes=$('detail-edit-notes')?.value||'';
-  saveData(); renderAll(); renderDetail();
-  showToast('수정 저장 완료','success');
+  if(!(await saveData()))return; // 실패 시 입력창을 유지하고 성공 메시지를 띄우지 않습니다.
+  renderAll();renderDetail();
+  showToast('브라우저 수정 저장 완료 · Drive 저장은 별도','success');
 }
 
 
@@ -3099,12 +3162,14 @@ window.addEventListener('DOMContentLoaded',()=>{
   installReliablePasteListener();
   removeItemsThatAreCarouselSlides();
   const repaired=repairAndPruneMediaItems();
-  if(repaired.linked||repaired.removed||taxonomyMigrated) saveLocal();
+  if(repaired.linked||repaired.removed||taxonomyMigrated){
+    try{saveLocal();setManualDrivePending(true);}catch(error){showStorageFeedback(describeStorageError(error),'error');}
+  }
 
   // 과거 레퍼런스 중 동일 제목이고 분류가 비어 있는 항목만 채움
   let filledFromTitles=0;
   items.forEach(it=>{if(isEmptyClassification(it.facets)){const existing=matchingClassification(it.title,it.id);if(existing){inheritTitleFacets(it);filledFromTitles++;}}});
-  if(filledFromTitles)saveLocal();
+  if(filledFromTitles){try{saveLocal();setManualDrivePending(true);}catch(error){showStorageFeedback(describeStorageError(error),'error');}}
   renderFacetFilters();
   renderAll();
   // renderDetail()은 필드 DOM을 다시 생성하므로 고정 컨테이너에 한 번만 위임 등록합니다.
@@ -3130,7 +3195,10 @@ window.addEventListener('DOMContentLoaded',()=>{
       syncItemsWithDriveAssets()
         .then(sync=>{
           const cleaned=repairAndPruneMediaItems();
-          if(sync.linked||sync.added||sync.merged||cleaned.linked||cleaned.removed){ saveLocal(); renderAll(); }
+          if(sync.linked||sync.added||sync.merged||cleaned.linked||cleaned.removed){
+            try{saveLocal();setManualDrivePending(true);}catch(error){showStorageFeedback(describeStorageError(error),'error');}
+            renderAll();
+          }
         })
         .catch(err=>console.warn('Drive 미디어 자동 연결 생략:',err));
     });

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>레퍼런스 탐색기</title>
-<link rel="stylesheet" href="./styles.css?v=20261118-area-counts">
+<link rel="stylesheet" href="./styles.css?v=20261118-save-repair-v2">
 <!-- Google Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -328,6 +328,11 @@
   </div>
 </div>
 
+<section id="storage-feedback" class="storage-feedback" role="status" aria-live="polite" hidden>
+  <span id="storage-feedback-message"></span>
+  <button id="storage-feedback-backup" type="button" onclick="downloadEmergencyJsonBackup()" hidden>JSON 긴급 백업</button>
+  <button class="storage-feedback-close" type="button" onclick="showStorageFeedback('')" aria-label="저장 안내 닫기">×</button>
+</section>
 <div id="toast"></div>
 <!-- NAS/HTTP 환경 붙여넣기 프록시: 포커스를 받아 paste 이벤트를 안정적으로 캐치 -->
 <div id="paste-proxy" contenteditable="true" tabindex="-1"
@@ -335,6 +340,6 @@
   aria-hidden="true"></div>
 
 
-<script src="./app.js?v=20261118-area-counts"></script>
+<script src="./app.js?v=20261118-save-repair-v2"></script>
 </body>
 </html>
