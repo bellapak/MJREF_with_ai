@@ -318,7 +318,8 @@ let pendingCarouselFiles=[];
 let modalMode='single';
 let modalSelectedCats=[];
 let gdriveToken=null;
-let tokenClient=null;
+let gdriveTokenExpiresAt=0;
+let driveSignInBusy=false;
 let gdriveFolderId=null;
 let gdriveAssetFolderId=null;
 let gdriveDataFileId=null;
@@ -542,7 +543,7 @@ function mergePdpAiFromDrive(remoteItems){
 // 상세페이지 AI 결과 전용 파일을 우선 읽습니다. 기존 Code.gs의 JSON은 호환용으로만 조회합니다.
 // 파일이 서로 다른 Drive JSON에 연결됐다면 조용히 0건 처리하지 않고 오류로 알려줍니다.
 async function getPdpDriveAnalysisSnapshot(){
-  await ensureDriveToken();await ensureDriveFolder();
+  ensureDriveToken();await ensureDriveFolder();
   const source=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
   if(!source)throw new Error('Drive에 refboard-data.json이 없습니다. 사이트에서 Drive에 저장하고 다시 시도하세요.');
   gdriveDataFileId=source.id;
@@ -606,7 +607,7 @@ async function syncPdpAiClassificationResults(){
     const message='입력 중인 상세페이지를 먼저 ‘수정 저장’해 주세요. 입력 내용이 덮어써지지 않도록 가져오기를 중단했습니다.';
     pdpSyncFeedback(message,'error');showToast(message,'error');return false;
   }
-  if(aiSyncBusy||driveSaveBusy||copyDriveLoading){
+  if(aiSyncBusy||driveSaveBusy||driveSignInBusy||copyDriveLoading){
     pdpSyncFeedback('다른 Drive 저장·불러오기 작업이 진행 중입니다. 완료 후 다시 눌러주세요.','error');return false;
   }
   const button=$('pdp-sync-ai-btn');
@@ -659,7 +660,7 @@ async function syncPdpAiClassificationResults(){
   }catch(e){
     console.error('상세페이지 AI 결과 반영 실패:',e);
     let message=String(e?.message||e||'알 수 없는 오류');
-    if(/OAuth|Token|401|403|권한/i.test(message))message+=' · 상단 Google 연결을 다시 실행해 주세요.';
+    if(e.name!=='DriveAuthError'&&/403|권한/i.test(message))message+=' · Google Drive의 파일 접근 권한을 확인해 주세요.';
     pdpSyncFeedback('결과 반영 실패: '+message,'error');
     showToast('상세페이지 AI 결과 반영에 실패했습니다.','error');
     return false;
@@ -909,6 +910,7 @@ function cacheDriveToken(token,expiresIn){
   if(!token) return;
   const exp=nowMs()+Math.max(0,Number(expiresIn||3600)-90)*1000;
   gdriveToken=token;
+  gdriveTokenExpiresAt=exp;
   try{
     sessionStorage.setItem(GDRIVE_TOKEN_STORE_KEY,token);
     sessionStorage.setItem(GDRIVE_TOKEN_EXP_KEY,String(exp));
@@ -921,9 +923,39 @@ function restoreCachedDriveToken(){
   try{
     const token=sessionStorage.getItem(GDRIVE_TOKEN_STORE_KEY)||'';
     const exp=Number(sessionStorage.getItem(GDRIVE_TOKEN_EXP_KEY)||0);
-    if(token && exp>nowMs()+30000){ gdriveToken=token; return token; }
+    if(token && exp>nowMs()){
+      gdriveToken=token;
+      gdriveTokenExpiresAt=exp;
+      return token;
+    }
   }catch(e){ console.warn(e); }
   return '';
+}
+
+function invalidateDriveToken(token=gdriveToken){
+  // A late 401 from an older request must not clear a newly renewed token.
+  if(token!==gdriveToken)return;
+  gdriveToken=null;
+  gdriveTokenExpiresAt=0;
+  try{
+    sessionStorage.removeItem(GDRIVE_TOKEN_STORE_KEY);
+    sessionStorage.removeItem(GDRIVE_TOKEN_EXP_KEY);
+  }catch(error){console.warn('Drive token cache cleanup failed:',error);}
+  updateDriveUi();
+}
+
+function currentDriveToken(){
+  if(gdriveToken && gdriveTokenExpiresAt>nowMs())return gdriveToken;
+  if(gdriveToken)invalidateDriveToken();
+  return restoreCachedDriveToken();
+}
+
+function driveAuthError(code,message){
+  return Object.assign(new Error(message),{name:'DriveAuthError',code});
+}
+
+function driveReconnectError(){
+  return driveAuthError('reauth_required','상단 ‘Google 연결’에서 기존 Drive 계정으로 다시 연결한 뒤 작업을 다시 눌러 주세요.');
 }
 
 function openGdriveSetup(){
@@ -943,14 +975,19 @@ function openGdriveSetup(){
 function saveGdriveSetup(){ 
   const v=$('gdrive-client-id-input').value.trim(); 
   if(!v){showToast('Client ID를 입력해주세요','error');return;} 
-  localStorage.setItem(GDRIVE_CLIENT_ID_KEY,v); 
+  if(v!==getGapiConfig().clientId){
+    localStorage.setItem(GDRIVE_CLIENT_ID_KEY,v);
+    localStorage.removeItem(GDRIVE_HAS_AUTH_KEY);
+    invalidateDriveToken();
+    gdriveFolderId=gdriveAssetFolderId=gdriveDataFileId=null;
+  }
   closeModal('gdrive-setup-modal'); 
   updateDriveUi(); 
   showToast('Drive 설정 저장 완료','success'); 
 }
 
 function updateDriveUi(){
-  const connected=!!gdriveToken;
+  const connected=!!gdriveToken&&gdriveTokenExpiresAt>nowMs();
   const status=$('gdrive-status');
   if(status){
     const pending=isManualDrivePending();
@@ -964,71 +1001,100 @@ function updateDriveUi(){
   const btn=$('gdrive-connect-btn'); if(btn) btn.textContent=connected?'Google 연결됨':'Google 연결';
 }
 
-async function requestDriveToken(promptMode=''){
+// Call only from an explicit button click, before any async work.
+function requestDriveToken(){
   const {clientId}=getGapiConfig();
-  if(!clientId){ openGdriveSetup(); throw new Error('Google OAuth Client ID가 없습니다.'); }
-  if(!window.google?.accounts?.oauth2){ throw new Error('Google Identity Services 스크립트를 불러오지 못했습니다.'); }
-  return await new Promise((resolve,reject)=>{
-    tokenClient=google.accounts.oauth2.initTokenClient({
-      client_id:clientId,
-      scope:DRIVE_SCOPE,
-      callback:(res)=>{
-        if(res.error){ reject(new Error(res.error)); return; }
-        cacheDriveToken(res.access_token,res.expires_in);
-        resolve(res.access_token);
-      },
-      error_callback: (err) => { reject(new Error(err.type || 'Popup Closed or Blocked')); }
-    });
-    tokenClient.requestAccessToken({prompt:promptMode});
+  if(!clientId){
+    openGdriveSetup();
+    throw driveAuthError('client_id_missing','Google Drive 설정에 OAuth Client ID를 입력한 뒤 다시 시도해 주세요.');
+  }
+  const oauth=window.google?.accounts?.oauth2;
+  if(!oauth)throw driveAuthError('sdk_unavailable','Google 연결 기능을 불러오지 못했습니다. Google 로그인 스크립트 차단 여부를 확인해 주세요.');
+  const prompt=localStorage.getItem(GDRIVE_HAS_AUTH_KEY)==='1'?'':'consent';
+  return new Promise((resolve,reject)=>{
+    let finished=false;
+    const finish=(error,response)=>{
+      if(finished)return;
+      finished=true;
+      clearTimeout(timer);
+      if(error){reject(error);return;}
+      cacheDriveToken(response.access_token,response.expires_in);
+      gdriveFolderId=gdriveAssetFolderId=gdriveDataFileId=null;
+      resolve(response.access_token);
+    };
+    const timer=setTimeout(()=>finish(driveAuthError('auth_timeout','Google 인증 응답을 받지 못했습니다. 열려 있는 인증창을 닫고 ‘Google 연결’에서 다시 시도해 주세요.')),120000);
+    try{
+      const client=oauth.initTokenClient({
+        client_id:clientId,
+        scope:DRIVE_SCOPE,
+        callback:(response)=>{
+          if(response?.error==='access_denied'){
+            finish(driveAuthError('access_denied','Google Drive 접근이 거부됐습니다. ‘Google 연결’에서 Drive 권한을 승인해 주세요.'));
+          }else if(response?.error||!response?.access_token){
+            finish(driveAuthError('oauth_failed','Google 인증 오류가 발생했습니다. 인증창의 계정 및 OAuth 설정을 확인해 주세요.'));
+          }else if(!oauth.hasGrantedAllScopes(response,DRIVE_SCOPE)){
+            finish(driveAuthError('scope_missing','Google Drive 권한이 선택되지 않았습니다. ‘Google 연결’에서 Drive 권한을 승인해 주세요.'));
+          }else{
+            finish(null,response);
+          }
+        },
+        error_callback:(error)=>{
+          const messages={
+            popup_closed:'인증이 완료되기 전에 Google 창이 닫혔습니다. ‘Google 연결’에서 계정 선택과 권한 승인을 완료해 주세요.',
+            popup_failed_to_open:'Google 인증창을 열지 못했습니다. 이 사이트의 팝업을 허용하고 ‘Google 연결’을 다시 눌러 주세요.'
+          };
+          finish(driveAuthError(error?.type||'popup_error',messages[error?.type]||'Google 인증창에서 오류가 발생했습니다. ‘Google 연결’을 다시 눌러 주세요.'));
+        }
+      });
+      client.requestAccessToken({prompt});
+    }catch(error){
+      finish(driveAuthError('oauth_setup_failed','Google 인증을 시작하지 못했습니다. OAuth Client ID와 사이트 주소 설정을 확인해 주세요.'));
+    }
   });
 }
 
-async function ensureDriveToken(forceConsent=false){
-  if(!forceConsent){
-    if(gdriveToken) return gdriveToken;
-    const cached=restoreCachedDriveToken();
-    if(cached) return cached;
-  }
-  const hasAuth=localStorage.getItem(GDRIVE_HAS_AUTH_KEY)==='1';
-  try{ 
-    return await requestDriveToken(forceConsent?'consent':(hasAuth?'':'consent')); 
-  } catch(e){
-    if(!forceConsent && hasAuth){ return await requestDriveToken('consent'); }
-    throw e;
-  }
+// Background requests may use a valid token, but must never open an OAuth popup.
+function ensureDriveToken(){
+  const token=currentDriveToken();
+  if(!token)throw driveReconnectError();
+  return token;
 }
 
 async function gdriveSignIn(){
-  try{ 
-    await ensureDriveToken(true); 
-    await ensureDriveFolder(); 
-    await ensureAssetFolder(); 
-    showToast('Google Drive 연결 완료','success'); 
-  } catch(e){ 
-    console.error(e); 
-    showToast('Drive 연결 실패: 팝업 차단 해제 또는 API 설정을 확인하세요.','error'); 
+  if(driveSignInBusy||driveSaveBusy||copyDriveLoading||aiSyncBusy){
+    showToast('Drive 작업이 진행 중입니다. 완료 후 다시 눌러 주세요.','');return false;
   }
+  driveSignInBusy=true;
+  try{
+    await requestDriveToken();
+    showStorageFeedback('Google Drive 연결 완료 · 이어서 ‘Drive에 저장’을 눌러 주세요.','success');
+    showToast('Google Drive 연결 완료','success');
+    return true;
+  }catch(error){
+    showStorageFeedback(`Google 연결 실패 · ${error.message}`,'error');
+    showToast('Google 연결 실패 · 하단 안내를 확인해 주세요.','error');
+    return false;
+  }finally{driveSignInBusy=false;}
 }
 
 // ─── Drive API & Storage ───
-async function driveFetch(url, opts={}, retryCount=0){ 
-  const token=await ensureDriveToken(); 
-  const res=await fetch(url,{...opts,headers:{Authorization:`Bearer ${token}`,...(opts.headers||{})}}); 
-  
-  if(!res.ok){ 
-    if(res.status === 401 && retryCount === 0){
-      console.warn('Drive Token expired (401). Retrying auth...');
-      gdriveToken = null;
-      sessionStorage.removeItem(GDRIVE_TOKEN_STORE_KEY);
-      sessionStorage.removeItem(GDRIVE_TOKEN_EXP_KEY);
-      localStorage.removeItem(GDRIVE_HAS_AUTH_KEY);
-      updateDriveUi();
-      return driveFetch(url, opts, 1);
-    }
-    const txt=await res.text().catch(()=>''); 
-    throw new Error(`Drive 요청 실패 ${res.status}: ${txt}`); 
-  } 
-  return res; 
+async function fetchWithDriveToken(url,opts={}){
+  const token=ensureDriveToken();
+  const res=await fetch(url,{...opts,headers:{Authorization:`Bearer ${token}`,...(opts.headers||{})}});
+  if(res.status===401){
+    invalidateDriveToken(token);
+    throw driveReconnectError();
+  }
+  return res;
+}
+
+async function driveFetch(url,opts={}){
+  const res=await fetchWithDriveToken(url,opts);
+  if(!res.ok){
+    const detail=await res.text().catch(()=>'');
+    throw new Error(`Drive 요청 실패 (HTTP ${res.status})${detail?': '+detail.slice(0,240):''}`);
+  }
+  return res;
 }
 
 async function findDriveFile(name,mimeType,parentId){
@@ -1110,10 +1176,9 @@ const DRIVE_UPLOAD_RETRY_LIMIT = 3;
 const driveUploadDelay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function getResumableUploadProgress(sessionUrl, size){
-  const token=await ensureDriveToken();
-  const res=await fetch(sessionUrl,{
+  const res=await fetchWithDriveToken(sessionUrl,{
     method:'PUT',
-    headers:{Authorization:`Bearer ${token}`,'Content-Range':`bytes */${size}`}
+    headers:{'Content-Range':`bytes */${size}`}
   });
   if(res.ok) return {complete:await res.json()};
   if(res.status===308){
@@ -1144,10 +1209,9 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
     let sent=false;
     for(let attempt=0;attempt<DRIVE_UPLOAD_RETRY_LIMIT && !sent;attempt++){
       try{
-        const token=await ensureDriveToken();
-        const res=await fetch(session,{
+        const res=await fetchWithDriveToken(session,{
           method:'PUT',
-          headers:{Authorization:`Bearer ${token}`,'Content-Type':type,'Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},
+          headers:{'Content-Type':type,'Content-Range':`bytes ${offset}-${end-1}/${blob.size}`},
           body:blob.slice(offset,end)
         });
         if(res.status===308){
@@ -1166,6 +1230,7 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
           throw new Error(`Drive 업로드 오류 ${res.status}: ${errorText.slice(0,200)}`);
         throw new Error(`일시적 Drive 업로드 오류 ${res.status}`);
       }catch(err){
+        if(err.name==='DriveAuthError')throw err;
         // 실패한 청크를 무조건 다시 보내지 않고 Drive에 수신 상태를 먼저 조회합니다.
         try{
           const progress=await getResumableUploadProgress(session,blob.size);
@@ -1176,6 +1241,7 @@ async function uploadBlobToDrive(blob,name,mimeType,parentId=null){
           offset=progress.offset;
           if(offset>=end){sent=true;continue;}
         }catch(checkErr){
+          if(checkErr.name==='DriveAuthError')throw checkErr;
           console.warn('Drive 업로드 복구 확인 실패:',checkErr);
           if(attempt===DRIVE_UPLOAD_RETRY_LIMIT-1)throw err;
         }
@@ -1201,8 +1267,12 @@ async function uploadDataFile(){
   }
   if(!gdriveDataFileId)throw new Error('Google Drive가 데이터 파일 ID를 반환하지 않았습니다.');
   // HTTP 성공 응답뿐 아니라 실제 Drive에 저장된 JSON을 다시 조회해 확인합니다.
-  const checked=await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(gdriveDataFileId)}?alt=media`,{cache:'no-store'});
-  if((await checked.text())!==serialized)throw new Error('Drive 저장 후 재확인에서 데이터가 일치하지 않습니다. 동시 저장이 있었는지 확인해 주세요.');
+  try{
+    const checked=await driveFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(gdriveDataFileId)}?alt=media`,{cache:'no-store'});
+    if((await checked.text())!==serialized)throw new Error('Drive에 기록된 내용이 현재 저장 내용과 다릅니다.');
+  }catch(error){
+    throw new Error(`Drive가 목록 전송을 받았지만 저장 내용을 확인하지 못했습니다. ${error.message}`);
+  }
   return true;
 }
 
@@ -1210,9 +1280,10 @@ async function uploadDataFile(){
 // 기존에 성공한 슬라이드는 재업로드하지 않으므로 부분 실패 뒤 재시도가 가능합니다.
 let driveSaveBusy=false;
 async function saveToDrive(silent=false){
-  if(driveSaveBusy||copyDriveLoading){if(!silent)showToast('Google Drive에 저장 중입니다.','');return false;}
+  if(driveSaveBusy||driveSignInBusy||copyDriveLoading||aiSyncBusy){if(!silent)showToast('Drive 작업이 진행 중입니다. 완료 후 다시 눌러 주세요.','');return false;}
   driveSaveBusy=true;
   let currentMedia='';
+  let authenticating=true;
   let completed=0;
   let aiMergeWarning='';
   let localSaveWarning='';
@@ -1224,11 +1295,19 @@ async function saveToDrive(silent=false){
     }
   };
   try{
+    if(!currentDriveToken()){
+      if(silent)throw driveReconnectError();
+      const authorization=requestDriveToken();
+      showStorageFeedback('Google 인증창에서 기존 Drive 계정을 선택해 주세요. 인증 후 저장을 시작합니다.');
+      await authorization;
+    }
+    authenticating=false;
+    currentMedia='Drive 폴더 확인';
+    showStorageFeedback('Google Drive에 저장 중입니다…');
     const localCacheResults=await cachePendingLocalFiles();
     if(localCacheResults.some(x=>x.status==='rejected')){
       console.warn('브라우저 원본 캐시 저장 실패 · Drive 원본 업로드는 계속 시도합니다.');
     }
-    await ensureDriveToken();
     await ensureDriveFolder();
 
     const pending=[];
@@ -1276,6 +1355,7 @@ async function saveToDrive(silent=false){
         const snapshot=await getPdpDriveAnalysisSnapshot();
         if(mergePdpAiFromDrive(snapshot.items))saveLocalBestEffort();
       }catch(error){
+        if(error.name==='DriveAuthError')throw error;
         // 상세페이지 AI 전용 JSON이 손상/미연결이어도 일반 레퍼런스 저장은 독립적으로 진행합니다.
         aiMergeWarning=String(error?.message||error).slice(0,150);
         console.warn('상세페이지 AI 결과 병합 생략 · 일반 레퍼런스 저장 계속:',error);
@@ -1291,7 +1371,10 @@ async function saveToDrive(silent=false){
       persistDeletedDriveIds(new Set(failed));
       if(failed.length){
         setManualDrivePending(true);
-        if(!silent)showToast(`레퍼런스 저장 완료 · 삭제 예약 ${failed.length}개는 다음에 재시도됩니다.`,'error');
+        const reconnect=results.some(result=>result.status==='rejected'&&result.reason?.name==='DriveAuthError');
+        const message=`레퍼런스는 Drive에 저장했습니다. 삭제 예약 ${failed.length}개가 남았습니다.`;
+        showStorageFeedback(message+(reconnect?' '+driveReconnectError().message:''),'warning');
+        if(!silent)showToast(message,'');
         return false;
       }
     }
@@ -1309,10 +1392,10 @@ async function saveToDrive(silent=false){
   }catch(e){
     console.error('Google Drive 수동 저장 실패:',{step:currentMedia,completed,error:e});
     setManualDrivePending(true);
-    const prefix=currentMedia?`${currentMedia} 저장 실패`: 'Drive 저장 실패';
-    const msg=e instanceof TypeError && /fetch/i.test(e.message)?'네트워크 연결 또는 Google Drive 요청 차단을 확인해 주세요.':(e.message||'알 수 없는 오류');
-    showStorageFeedback(`${prefix}: ${msg}`,'error');
-    if(!silent)showToast('Drive 저장 실패 · 하단 안내를 확인하세요.','error');
+    const prefix=authenticating?'Google 인증 실패 · Drive 전송 시작 전':e.name==='DriveAuthError'?'Google 연결 만료 · Drive 저장 중단':`Drive 저장 확인 실패 · ${currentMedia}`;
+    const msg=e instanceof TypeError && /fetch/i.test(e.message)?'네트워크 연결과 Google Drive 요청 차단 여부를 확인해 주세요.':(e.message||'알 수 없는 오류');
+    showStorageFeedback(`${prefix} · ${msg}`,'error');
+    if(!silent)showToast(authenticating?'Google 인증 실패 · 하단 안내를 확인해 주세요.':'Drive 저장 미완료 · 하단 안내를 확인해 주세요.','error');
     return false;
   }finally{driveSaveBusy=false;}
 }
@@ -1379,10 +1462,11 @@ async function syncItemsWithDriveAssets(){
 }
 
 async function loadFromDrive(){
+  if(copyDriveLoading||driveSaveBusy||driveSignInBusy){showToast('Drive 작업이 진행 중입니다.','error');return false;}
+  if(!currentDriveToken()){showStorageFeedback(driveReconnectError().message,'error');return false;}
   if(isManualDrivePending() && !confirm('Drive에 저장되지 않은 로컬 변경사항이 있습니다.\nDrive 데이터를 불러오면 로컬 변경사항이 사라질 수 있습니다. 계속할까요?')) return false;
   if(!confirmCopyDraftDiscard()) return false;
   const previousPendingDeletes=getDeletedDriveIds();
-  if(copyDriveLoading||driveSaveBusy){showToast('Drive 작업이 진행 중입니다.','error');return false;}
   copyDriveLoading=true;
   const previousCopies=copyNotes.map(note=>({...note}));
   let legacyCopiesKept=false;
@@ -1390,7 +1474,7 @@ async function loadFromDrive(){
     // 명시적으로 불러오기를 선택한 경우 로컬 삭제 예약은 임시 해제합니다.
     // 불러오기 실패 시 기존 삭제 예약을 복원합니다.
     persistDeletedDriveIds(new Set());
-    await ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
+    ensureDriveToken(); await ensureDriveFolder(); await ensureAssetFolder();
     const f=await findDriveFile(DRIVE_DATA_FILE_NAME,'application/json',gdriveFolderId);
     const deleted=new Set();
     if(f){
@@ -1414,7 +1498,7 @@ async function loadFromDrive(){
     if(legacyCopiesKept) $('copy-form-status').textContent='기존 Drive 파일에 카피 항목이 없어 로컬 카피를 유지했습니다. Drive에 저장해 주세요.';
     showToast(`Drive 불러오기 완료 · 에셋 ${sync.total}개 / 연결 ${sync.linked}개 / 추가 ${sync.added}개${sync.merged?` / 중복 정리 ${sync.merged}개`:''}`,'success');
     return true;
-  }catch(e){ copyNotes=previousCopies; renderCopies(); console.error(e); persistDeletedDriveIds(previousPendingDeletes); showToast((e.message||'Drive 불러오기 실패')+' · Google 연결을 다시 눌러 권한을 재승인해주세요','error'); return false; }finally{copyDriveLoading=false;}
+  }catch(e){ copyNotes=previousCopies; renderCopies(); console.error(e); persistDeletedDriveIds(previousPendingDeletes); showStorageFeedback('Drive 불러오기 실패 · '+(e.message||'알 수 없는 오류'),'error'); return false; }finally{copyDriveLoading=false;}
 }
 
 // Google Apps Script performs analysis independently. This static site only imports its Drive results.
@@ -1466,7 +1550,8 @@ function openAiScriptConsole(){
 }
 async function syncAiClassificationResults(){
   if(aiSyncBusy)return;
-  if(!(gdriveToken||restoreCachedDriveToken())){
+  if(driveSaveBusy||driveSignInBusy||copyDriveLoading)return;
+  if(!currentDriveToken()){
     const msg=$('ai-sync-message');if(msg)msg.textContent='먼저 상단 Google 연결 버튼으로 Drive 로그인한 후 다시 시도하세요.';
     showToast('먼저 Google Drive에 연결하세요.','error');return;
   }
@@ -1602,8 +1687,7 @@ async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink='',pr
       const smallThumb=optimizeDriveThumbnailLink(thumbnailLink, CARD_THUMB_SIZE);
       if(smallThumb){
         try{
-          const token=await ensureDriveToken();
-          const res=await fetch(smallThumb,{headers:{Authorization:`Bearer ${token}`}});
+          const res=await fetchWithDriveToken(smallThumb);
           if(res.ok){
             const blob=await res.blob();
             if(blob && blob.size){
