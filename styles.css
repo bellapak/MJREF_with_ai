@@ -1513,3 +1513,12 @@ body{font-size:13px;}
 .pdp-sync-feedback[data-tone="error"]{border-color:#f5cac9;background:#fff8f7;color:#9e3030}
 .pdp-sync-feedback[data-tone="warning"]{border-color:#f0dcad;background:#fffaf0;color:#80601e}
 .pdp-sync-feedback[data-tone="success"]{border-color:#cbe9d2;background:#f4fbf6;color:#276540}
+
+/* 2026-11-18 · 콘텐츠 분석 분야 카운트 정합성 */
+.area-count-audit{margin:12px 2px 4px;padding:10px 11px;background:rgba(0,100,255,.045);border:1px solid rgba(0,100,255,.13);border-radius:11px;display:flex;flex-direction:column;gap:5px}
+.area-audit-line{color:var(--t2);font-size:10px;line-height:1.55;word-break:keep-all}
+.area-audit-line:first-child{color:var(--t1);font-weight:700}
+.area-nav-unassigned{border-style:dashed;background:rgba(255,159,10,.035)}
+.area-nav-unassigned .area-nav-code{color:#a46a16}
+.area-nav-extra{background:rgba(120,120,140,.04)}
+.area-nav-item small{font-variant-numeric:tabular-nums;font-size:10px;font-weight:700}

@@ -167,17 +167,73 @@ function renderFacetFilterCollection(rootId,keys){
   root.dataset.initialized='1';
   root.querySelectorAll('input').forEach(el=>el.onchange=()=>{const k=el.dataset.filterFacet;const set=new Set(facetFilters[k]||[]);el.checked?set.add(el.value):set.delete(el.value);facetFilters[k]=[...set];renderBoard();updateFacetFilterCounts();});
 }
+// 콘텐츠 분석 분야 집계는 저장된 일반 레퍼런스 1개 = 1건을 기준으로 합니다.
+// 분야별 합계는 복수 태그로 인해 전체 건수보다 클 수 있고, 분야 미지정은 별도로 집계합니다.
+const CONTENT_AREA_UNASSIGNED='__refboard_unassigned_area__';
+function itemContentAreas(it){
+  const raw=it?.facets?.contentArea;
+  return Array.isArray(raw)?[...new Set(raw.filter(v=>typeof v==='string'&&v.trim()).map(v=>v.trim()))]:[];
+}
+function contentAreaCountSummary(source){
+  const counts=new Map();let assigned=0,unassigned=0,multiple=0,assignments=0;
+  for(const it of source){
+    const areas=itemContentAreas(it);
+    if(areas.length)assigned++;else unassigned++;
+    if(areas.length>1)multiple++;
+    assignments+=areas.length;
+    for(const value of areas)counts.set(value,(counts.get(value)||0)+1);
+  }
+  return {total:source.length,assigned,unassigned,multiple,assignments,counts};
+}
 function renderAreaSelector(){
   const root=$('area-selector');if(!root)return;
-  const allActive=activeAreaFilters.size===0;
+  // 탐색 필터/검색어가 적용되어도 '분야 자체'는 제외한 결과로 분류 건수를 계산합니다.
+  // 따라서 각 분야의 숫자는 클릭했을 때 볼 수 있는 콘텐츠 수와 일치합니다.
+  const scope=filteredItems({ignoreArea:true});
+  const scoped=contentAreaCountSummary(scope);
   const refs=referenceItems();
-  root.innerHTML=`<button type="button" class="area-nav-all${allActive?' is-active':''}" aria-pressed="${allActive}" onclick="clearAreaFilters()"><span>전체 분야</span><small>${refs.length}</small></button>`+
-    CONTENT_AREAS.map(a=>{const active=activeAreaFilters.has(a.name);const count=refs.filter(it=>(it.facets?.contentArea||[]).includes(a.name)).length;
-      return `<button type="button" class="area-nav-item${active?' is-active':''}" aria-pressed="${active}" onclick="toggleAreaFilter('${a.name}')" title="${esc(a.desc)}"><span class="area-nav-code">${a.code}</span><span class="area-nav-name">${esc(a.short)}</span><small>${count}</small></button>`;
-    }).join('');
+  const all=contentAreaCountSummary(refs);
+  const allActive=activeAreaFilters.size===0;
+  const knownNames=new Set(CONTENT_AREAS.map(a=>a.name));
+  const knownButtons=CONTENT_AREAS.map(a=>{
+    const active=activeAreaFilters.has(a.name);
+    return `<button type="button" data-area-value="${esc(a.name)}" class="area-nav-item${active?' is-active':''}" aria-pressed="${active}" title="${esc(a.desc)}"><span class="area-nav-code">${a.code}</span><span class="area-nav-name">${esc(a.short)}</span><small>${scoped.counts.get(a.name)||0}</small></button>`;
+  }).join('');
+  // 새로운 Code.gs taxonomy 또는 옛 AI 태그라도 저장값 자체를 숨기지 않습니다.
+  const extra=[...scoped.counts.keys()].filter(name=>!knownNames.has(name)).sort((a,b)=>a.localeCompare(b,'ko'));
+  const extraButtons=extra.map(name=>{
+    const active=activeAreaFilters.has(name);
+    return `<button type="button" data-area-value="${esc(name)}" class="area-nav-item area-nav-extra${active?' is-active':''}" aria-pressed="${active}" title="기존 데이터에 저장된 별도 분석 분야"><span class="area-nav-code">기존 태그</span><span class="area-nav-name">${esc(name)}</span><small>${scoped.counts.get(name)||0}</small></button>`;
+  }).join('');
+  // 다른 필터에 의해 현재 범위에서 0건이 되더라도 선택 중인 태그는 유지해서 해제가 가능해야 합니다.
+  const hiddenSelected=[...activeAreaFilters].filter(name=>name!==CONTENT_AREA_UNASSIGNED&&!knownNames.has(name)&&!scoped.counts.has(name));
+  const hiddenButtons=hiddenSelected.map(name=>`<button type="button" data-area-value="${esc(name)}" class="area-nav-item area-nav-extra is-active" aria-pressed="true"><span class="area-nav-code">기존 태그</span><span class="area-nav-name">${esc(name)}</span><small>0</small></button>`).join('');
+  const unassignedActive=activeAreaFilters.has(CONTENT_AREA_UNASSIGNED);
+  root.innerHTML=`<button type="button" class="area-nav-all${allActive?' is-active':''}" aria-pressed="${allActive}" onclick="clearAreaFilters()"><span>전체 분야</span><small>${scoped.total}</small></button>`+
+    knownButtons+
+    `<button type="button" data-area-value="${CONTENT_AREA_UNASSIGNED}" class="area-nav-item area-nav-unassigned${unassignedActive?' is-active':''}" aria-pressed="${unassignedActive}" title="저장은 되었지만 콘텐츠 분석 분야 태그가 없는 항목"><span class="area-nav-code">UNASSIGNED</span><span class="area-nav-name">분야 미지정</span><small>${scoped.unassigned}</small></button>`+
+    extraButtons+hiddenButtons;
+  root.querySelectorAll('[data-area-value]').forEach(button=>button.addEventListener('click',()=>toggleAreaFilter(button.dataset.areaValue)));
+  const audit=$('area-count-audit');
+  if(audit){
+    const detailCount=items.length-refs.length;
+    audit.replaceChildren();
+    const top=document.createElement('div');top.className='area-audit-line';
+    top.textContent=`저장된 미디어 콘텐츠 ${items.length}건 = 레퍼런스 ${refs.length}건 + 상세페이지 ${detailCount}건`;
+    const second=document.createElement('div');second.className='area-audit-line';
+    second.textContent=`레퍼런스 분야 지정 ${all.assigned}건 · 미지정 ${all.unassigned}건 · 복수 지정 ${all.multiple}건`;
+    audit.append(top,second);
+    if(scoped.total!==all.total){
+      const scopedLine=document.createElement('div');scopedLine.className='area-audit-line';
+      scopedLine.textContent=`현재 검색·다른 필터 대상 ${scoped.total}건`;
+      audit.appendChild(scopedLine);
+    }
+  }
   const desc=$('area-selector-description');
-  if(desc)desc.textContent=allActive?'공통 태그로 전체 탐색 · 분야를 선택하면 심화 필터 표시':`${[...activeAreaFilters].join(' + ')} 분석 중 · 선택한 분야끼리는 OR 검색`;
+  const labels=[...activeAreaFilters].map(v=>v===CONTENT_AREA_UNASSIGNED?'분야 미지정':v);
+  if(desc)desc.textContent=allActive?'분야별 숫자는 복수 태그가 있을 때 중복 집계됩니다. 미지정 콘텐츠도 별도로 확인할 수 있어요.':`${labels.join(' + ')} · 분야끼리 OR 검색 (복수 선택)`;
 }
+
 function clearAreaFilters(){activeAreaFilters.clear();renderAreaSelector();renderFacetFilters();renderBoard();}
 function toggleAreaFilter(value){
   if(activeAreaFilters.has(value))activeAreaFilters.delete(value);else activeAreaFilters.add(value);
@@ -214,7 +270,7 @@ function renderNavigatorChips(){
   const target=$('active-filter-chips');if(!target)return;
   target.replaceChildren();
   const add=(label,callback)=>{const b=document.createElement('button');b.type='button';b.className='active-filter-chip';b.textContent=label+' ×';b.addEventListener('click',callback);target.appendChild(b);};
-  [...activeAreaFilters].forEach(v=>add('분야 · '+v,()=>toggleAreaFilter(v)));
+  [...activeAreaFilters].forEach(v=>add('분야 · '+(v===CONTENT_AREA_UNASSIGNED?'미지정':v),()=>toggleAreaFilter(v)));
   Object.entries(facetFilters).forEach(([k,vs])=>(vs||[]).forEach(v=>add(`${FACET_NAMES[k]||k} · ${v}`,()=>removeFacetChip(k,v))));
   if(currentFilter!=='all')add('유형 · '+({image:'이미지',video:'영상',carousel:'캐러셀',link:'링크'}[currentFilter]||currentFilter),()=>{currentFilter='all';document.querySelectorAll('.sb-btn[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter==='all'));renderBoard();});
   if(classificationFilter!=='all')add(classificationFilter==='classified'?'분류 완료':'미분류',()=>{classificationFilter='all';$('classification-filter').value='all';renderBoard();});
@@ -1907,9 +1963,12 @@ function renderAll(){
   updateAiClassificationStats();
 }
 function debouncedRenderBoard(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderBoard,120); }
-function filteredItems(){
+function filteredItems(options={}){
   let q=($('search-input')?.value||'').toLowerCase().trim(); let arr=referenceItems();
-  if(activeAreaFilters.size)arr=arr.filter(it=>(it.facets?.contentArea||[]).some(v=>activeAreaFilters.has(v)));
+  if(!options.ignoreArea&&activeAreaFilters.size)arr=arr.filter(it=>{
+    const areas=itemContentAreas(it);
+    return (activeAreaFilters.has(CONTENT_AREA_UNASSIGNED)&&areas.length===0) || areas.some(v=>activeAreaFilters.has(v));
+  });
   if(currentFilter!=='all') arr=arr.filter(x=>x.type===currentFilter);
   if(currentCatFilter) arr=arr.filter(x=>x.catIds?.includes(currentCatFilter));
   if(q) arr=arr.filter(x=>[x.title,x.brand,x.caption,x.notes,x.hook,x.imageCopy,x.sourceUrl,Object.values(x.facets||{}).flat().join(' ')].join(' ').toLowerCase().includes(q));
@@ -2100,6 +2159,7 @@ function renderBoard(){
   
   const arr=filteredItems();
   $('count-label') && ($('count-label').textContent=`${arr.length}개`);
+  renderAreaSelector(); // 검색·파일 유형·상세 필터 변경 시 분야 수치도 같은 기준으로 즉시 갱신
   renderCounts();
   renderNavigatorChips();
   updateBulkToolbars();
