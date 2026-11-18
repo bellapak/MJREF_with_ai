@@ -296,7 +296,6 @@ const LS_KEY='refboard_v31_state';
 const GDRIVE_CLIENT_ID_KEY='refboard_google_client_id';
 const GDRIVE_TOKEN_STORE_KEY='refboard_google_access_token_v36';
 const GDRIVE_TOKEN_EXP_KEY='refboard_google_access_token_exp_v36';
-const GDRIVE_HAS_AUTH_KEY='refboard_google_has_auth_v36';
 const DELETED_DRIVE_IDS_KEY='refboard_deleted_drive_ids_v34';
 const MANUAL_DRIVE_DIRTY_KEY='refboard_manual_drive_pending_v1';
 
@@ -914,7 +913,6 @@ function cacheDriveToken(token,expiresIn){
   try{
     sessionStorage.setItem(GDRIVE_TOKEN_STORE_KEY,token);
     sessionStorage.setItem(GDRIVE_TOKEN_EXP_KEY,String(exp));
-    localStorage.setItem(GDRIVE_HAS_AUTH_KEY,'1');
   }catch(e){ console.warn(e); }
   updateDriveUi();
 }
@@ -977,7 +975,6 @@ function saveGdriveSetup(){
   if(!v){showToast('Client ID를 입력해주세요','error');return;} 
   if(v!==getGapiConfig().clientId){
     localStorage.setItem(GDRIVE_CLIENT_ID_KEY,v);
-    localStorage.removeItem(GDRIVE_HAS_AUTH_KEY);
     invalidateDriveToken();
     gdriveFolderId=gdriveAssetFolderId=gdriveDataFileId=null;
   }
@@ -1010,7 +1007,6 @@ function requestDriveToken(){
   }
   const oauth=window.google?.accounts?.oauth2;
   if(!oauth)throw driveAuthError('sdk_unavailable','Google 연결 기능을 불러오지 못했습니다. Google 로그인 스크립트 차단 여부를 확인해 주세요.');
-  const prompt=localStorage.getItem(GDRIVE_HAS_AUTH_KEY)==='1'?'':'consent';
   return new Promise((resolve,reject)=>{
     let finished=false;
     const finish=(error,response)=>{
@@ -1029,7 +1025,7 @@ function requestDriveToken(){
         scope:DRIVE_SCOPE,
         callback:(response)=>{
           if(response?.error==='access_denied'){
-            finish(driveAuthError('access_denied','Google Drive 접근이 거부됐습니다. ‘Google 연결’에서 Drive 권한을 승인해 주세요.'));
+            finish(driveAuthError('access_denied','Google이 Drive 접근을 거부했습니다. ‘Google 연결’에서 MJREF에 사용하던 계정을 선택하고 Drive 권한을 확인해 주세요.'));
           }else if(response?.error||!response?.access_token){
             finish(driveAuthError('oauth_failed','Google 인증 오류가 발생했습니다. 인증창의 계정 및 OAuth 설정을 확인해 주세요.'));
           }else if(!oauth.hasGrantedAllScopes(response,DRIVE_SCOPE)){
@@ -1046,7 +1042,7 @@ function requestDriveToken(){
           finish(driveAuthError(error?.type||'popup_error',messages[error?.type]||'Google 인증창에서 오류가 발생했습니다. ‘Google 연결’을 다시 눌러 주세요.'));
         }
       });
-      client.requestAccessToken({prompt});
+      client.requestAccessToken({prompt:'select_account'});
     }catch(error){
       finish(driveAuthError('oauth_setup_failed','Google 인증을 시작하지 못했습니다. OAuth Client ID와 사이트 주소 설정을 확인해 주세요.'));
     }
