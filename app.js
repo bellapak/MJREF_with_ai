@@ -1066,7 +1066,7 @@ async function gdriveSignIn(){
   }
   driveSignInBusy=true;
   try{
-    await requestDriveToken();
+    if(!currentDriveToken())await requestDriveToken();
     showStorageFeedback('Google Drive 연결 완료 · 이어서 ‘Drive에 저장’을 눌러 주세요.','success');
     showToast('Google Drive 연결 완료','success');
     return true;
@@ -1640,6 +1640,14 @@ function optimizeDriveThumbnailLink(thumbnailLink='', size=CARD_THUMB_SIZE){
   return url + (url.includes('=') ? '' : '=s'+size);
 }
 
+async function fetchDriveThumbnail(url){
+  const target=new URL(url);
+  if(target.protocol!=='https:' || target.port || target.username || target.password ||
+     !/^(lh\d+\.googleusercontent\.com|drive\.google\.com)$/.test(target.hostname))return null;
+  // Thumbnail links can expire before the Drive API token does.
+  return fetch(target.href,{headers:{Authorization:`Bearer ${ensureDriveToken()}`}});
+}
+
 function setMediaLoaded(el){
   if(!el) return;
   el.classList.remove('media-loading');
@@ -1687,8 +1695,8 @@ async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink='',pr
       const smallThumb=optimizeDriveThumbnailLink(thumbnailLink, CARD_THUMB_SIZE);
       if(smallThumb){
         try{
-          const res=await fetchWithDriveToken(smallThumb);
-          if(res.ok){
+          const res=await fetchDriveThumbnail(smallThumb);
+          if(res?.ok){
             const blob=await res.blob();
             if(blob && blob.size){
               const url=URL.createObjectURL(blob);
@@ -1699,6 +1707,7 @@ async function getDriveThumbnailObjectURL(fileId,mimeType='',thumbnailLink='',pr
             }
           }
         }catch(e){
+          if(e.name==='DriveAuthError')throw e;
           console.warn('Drive thumbnail fallback to media:', e);
         }
       }
