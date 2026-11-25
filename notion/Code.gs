@@ -36,7 +36,7 @@ function notion_(path, method, body, token) {
   const response = UrlFetchApp.fetch('https://api.notion.com/v1/' + path, {
     method, contentType: 'application/json',
     headers: {Authorization: 'Bearer ' + token, 'Notion-Version': NOTION_VERSION},
-    payload: JSON.stringify(body), muteHttpExceptions: true
+    ...(body == null ? {} : {payload: JSON.stringify(body)}), muteHttpExceptions: true
   });
   const status = response.getResponseCode();
   if (status < 200 || status >= 300) {
@@ -62,16 +62,42 @@ function sendCard(raw, category) {
     if (found.length > 1) throw new Error('같은 MJREF ID가 여러 건 있어요. 자료함에서 중복을 확인해 주세요.');
     const properties = {
       '제목': {title: richText_(card.title)}, '링크': {url: card.link || null},
-      '본문': {rich_text: richText_(card.memo)}, 'MJREF ID': {rich_text: richText_(card.id)}
+      'MJREF ID': {rich_text: richText_(card.id)}
     };
     // The inbox is a view filtered to empty notes. Preserve a user's later
     // classification on repeat sends unless they explicitly select another tag.
     const tags = found[0]?.properties['노트']?.multi_select?.map(tag => tag.name) || [];
     if (category !== '수집함' && !tags.includes(category)) tags.push(category);
     if (!found.length || category !== '수집함') properties['노트'] = {multi_select: tags.map(name => ({name}))};
+    const heading = {heading_3: {rich_text: richText_('본문')}, type: 'heading_3', object: 'block'};
+    const paragraph = {paragraph: {rich_text: richText_(card.memo)}, type: 'paragraph', object: 'block'};
+    if (found.length) updateMemo_(found[0].id, heading, paragraph, token);
     const page = found.length
       ? notion_('pages/' + found[0].id, 'patch', {properties}, token)
-      : notion_('pages', 'post', {parent: {type: 'data_source_id', data_source_id: source}, properties}, token);
+      : notion_('pages', 'post', {parent: {type: 'data_source_id', data_source_id: source}, properties, children: [heading, paragraph]}, token);
     return {url: page.url, result: found.length ? '기존 자료를 업데이트했어요.' : '노션에 저장했어요.'};
   } finally { lock.releaseLock(); }
+}
+
+function updateMemo_(pageId, heading, paragraph, token) {
+  const path = 'blocks/' + pageId + '/children';
+  const blocks = [];
+  let cursor = '';
+  do {
+    const page = notion_(path + '?page_size=100' + (cursor ? '&start_cursor=' + encodeURIComponent(cursor) : ''), 'get', null, token);
+    blocks.push(...page.results);
+    cursor = page.next_cursor;
+  } while (cursor);
+  const index = blocks.findIndex(block => block.type === 'heading_3' &&
+    block.heading_3.rich_text.map(part => part.plain_text).join('') === '본문');
+  if (index < 0) {
+    notion_(path, 'patch', {children: [heading, paragraph]}, token);
+    return;
+  }
+  const memo = blocks[index + 1];
+  if (memo && memo.type === 'paragraph') {
+    notion_('blocks/' + memo.id, 'patch', {paragraph: paragraph.paragraph}, token);
+  } else {
+    notion_(path, 'patch', {after: blocks[index].id, children: [paragraph]}, token);
+  }
 }
