@@ -62,7 +62,7 @@ function sendCard(raw, category) {
     if (found.length > 1) throw new Error('같은 MJREF ID가 여러 건 있어요. 자료함에서 중복을 확인해 주세요.');
     const properties = {
       '제목': {title: richText_(card.title)}, '링크': {url: card.link || null},
-      '기억할 한 줄': {rich_text: richText_(card.memo)}, 'MJREF ID': {rich_text: richText_(card.id)}
+      '본문': {rich_text: richText_(card.memo)}, 'MJREF ID': {rich_text: richText_(card.id)}
     };
     // The inbox is a view filtered to empty notes. Preserve a user's later
     // classification on repeat sends unless they explicitly select another tag.
