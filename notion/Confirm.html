@@ -1,0 +1,21 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px/1.55 system-ui,sans-serif;max-width:34rem;margin:8vh auto;padding:0 20px;color:#28252e}h1{font-size:1.6rem;overflow-wrap:anywhere}button,select{padding:.65rem 1rem;font:inherit;border:1px solid #aaa;border-radius:.45rem}button{background:#292530;color:white;cursor:pointer}form{display:grid;gap:1rem}a{color:#5346a6}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f5f8;padding:12px}</style></head><body>
+<h1><?= card.title ?></h1>
+<? if (card.link) { ?><p><a href="<?= card.link ?>" target="_blank" rel="noopener noreferrer">원본 열기</a></p><? } ?>
+<? if (card.memo) { ?><pre><?= card.memo ?></pre><? } ?>
+<form id="confirm"><textarea hidden id="payload"><?= JSON.stringify(card) ?></textarea>
+<label>저장할 곳 <select id="category"><option>수집함</option><option>팝업 경험</option><option>마케팅 사례</option><option>아이디어</option></select></label>
+<small>다시 보내면 기존 자료의 제목·원본 링크·메모가 갱신됩니다.</small><button id="send">노션에 저장</button></form>
+<p id="status" role="status"></p><a id="result" hidden target="_blank" rel="noopener">저장한 자료 열기</a>
+<script>
+const form=document.getElementById('confirm'), button=document.getElementById('send'), statusLine=document.getElementById('status');
+form.onsubmit=event=>{
+  event.preventDefault(); if(button.disabled)return;
+  button.disabled=true; statusLine.textContent='저장 중…';
+  google.script.run.withSuccessHandler(response=>{
+    form.style.display='none'; statusLine.textContent=response.result;
+    const link=document.getElementById('result'); link.href=response.url; link.hidden=false;
+  }).withFailureHandler(error=>{button.disabled=false;statusLine.textContent=error.message;})
+    .sendCard(JSON.parse(document.getElementById('payload').value),document.getElementById('category').value);
+};
+</script></body></html>
